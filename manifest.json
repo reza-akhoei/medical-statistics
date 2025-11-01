@@ -1,9 +1,4 @@
 {
-  "version": 1,
-  "metadata": {
-    "appmode": "shiny"
-  },
-  "packages": {
-    "cran": ["shiny", "ggplot2", "dplyr", "bslib"]
-  }
+  "version": "1.0.0",
+  "name": "medical-statistics-app"
 }
