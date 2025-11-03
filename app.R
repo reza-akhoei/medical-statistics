@@ -11,6 +11,8 @@ library(MASS)  # برای رگرسیون
 library(broom)  # برای زیبا کردن خروجی رگرسیون
 library(survival)
 library(survminer)
+library(tidyr)
+library(sn)
 
 # تعریف UI با تراز راست برای تمام بخش‌ها
 ui <- fluidPage(
@@ -3935,6 +3937,12 @@ server <- function(input, output, session) {
                     mean = input$norm_mean, 
                     sd = input$norm_sd)
       
+      # محاسبه محدوده ثابت برای محورها
+      x_min <- min(input$norm_mean - 4*input$norm_sd, -100)
+      x_max <- max(input$norm_mean + 4*input$norm_sd, 100)
+      x_range <- max(abs(x_min), abs(x_max))
+      x_limits <- c(-x_range, x_range)
+      
       df <- data.frame(Value = data)
       
       p1 <- ggplot(df, aes(x = Value)) +
@@ -3944,6 +3952,7 @@ server <- function(input, output, session) {
         stat_function(fun = dnorm, 
                       args = list(mean = input$norm_mean, sd = input$norm_sd),
                       color = "red", size = 1, linetype = "dashed") +
+        coord_cartesian(xlim = x_limits) +  # ثابت نگه داشتن محور x
         theme_minimal() +
         labs(title = "هیستوگرام و منحنی چگالی",
              x = "مقدار", y = "چگالی")
@@ -4007,11 +4016,15 @@ server <- function(input, output, session) {
       
       df <- data.frame(Successes = data)
       
+      # محدوده ثابت برای محور x
+      x_limits <- c(0, input$binom_n)
+      
       ggplot(df, aes(x = Successes)) +
         geom_bar(aes(y = ..count.. / sum(..count..)), 
                  fill = "lightgreen", alpha = 0.7, color = "black") +
         stat_function(fun = function(x) dbinom(x, size = input$binom_n, prob = input$binom_p),
                       color = "red", size = 1, n = input$binom_n + 1) +
+        coord_cartesian(xlim = x_limits, ylim = c(0, 0.3)) +  # ثابت نگه داشتن محورها
         theme_minimal() +
         labs(title = paste("توزیع دوجمله‌ای - n =", input$binom_n, ", p =", input$binom_p),
              x = "تعداد موفقیت‌ها", 
@@ -4050,6 +4063,11 @@ server <- function(input, output, session) {
       
       df <- data.frame(Count = data)
       
+      # محدوده ثابت برای محور x بر اساس لاندا
+      x_max <- max(20, input$pois_lambda * 3)  # حداقل تا 20 یا 3 برابر لاندا
+      x_limits <- c(0, x_max)
+      y_max <- max(0.3, dpois(round(input$pois_lambda), input$pois_lambda) * 1.5)
+      
       max_count <- max(data)
       
       ggplot(df, aes(x = Count)) +
@@ -4057,12 +4075,14 @@ server <- function(input, output, session) {
                  fill = "orange", alpha = 0.7, color = "black") +
         stat_function(fun = function(x) dpois(x, lambda = input$pois_lambda),
                       color = "red", size = 1, n = max_count + 1) +
+        coord_cartesian(xlim = x_limits, ylim = c(0, y_max)) +  # ثابت نگه داشتن محورها
         theme_minimal() +
         labs(title = paste("توزیع پواسون - λ =", input$pois_lambda),
              x = "تعداد رویدادها", 
              y = "احتمال") +
-        scale_x_continuous(breaks = 0:max_count)
+        scale_x_continuous(breaks = function(x) seq(0, x[2], by = max(1, floor(x[2]/10))))
     })
+
     
     output$poisson_info <- renderPrint({
       lambda <- input$pois_lambda
@@ -4114,9 +4134,18 @@ server <- function(input, output, session) {
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
-  # شبیه‌ساز فاصله اطمینان
+  # شبیه‌ساز فاصله اطمینان - نسخه اصلاح شده
+  
+  
+  # شبیه‌ساز فاصله اطمینان با محورهای کاملاً ثابت
   observeEvent(input$calc_ci, {
     output$ci_plot <- renderPlot({
+      req(input$ci_mean, input$ci_sd, input$ci_n)
+      
+      # تعریف محدوده ثابت برای محور Y - کاملاً ثابت
+      y_min <- 0    # حداقل ثابت
+      y_max <- 200  # حداکثر ثابت
+      
       mean_val <- input$ci_mean
       sd_val <- input$ci_sd
       n <- input$ci_n
@@ -4129,56 +4158,94 @@ server <- function(input, output, session) {
       lower <- mean_val - margin
       upper <- mean_val + margin
       
+      # اطمینان از اینکه مقادیر در محدوده ثابت باشند
+      lower_display <- max(y_min, lower)
+      upper_display <- min(y_max, upper)
+      mean_display <- ifelse(mean_val < y_min, y_min, 
+                             ifelse(mean_val > y_max, y_max, mean_val))
+      
       df <- data.frame(
-        x = c("فاصله اطمینان"),
-        estimate = mean_val,
-        lower = lower,
-        upper = upper
+        x = "فاصله اطمینان",
+        estimate = mean_display,
+        lower = lower_display,
+        upper = upper_display
       )
       
+      # ایجاد نمودار با محورهای کاملاً ثابت
       ggplot(df, aes(x = x, y = estimate)) +
-        geom_point(size = 4, color = "blue") +
-        geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.1, size = 1.5, color = "red") +
+        geom_point(size = 6, color = "#2E86AB", shape = 18) +
+        geom_errorbar(aes(ymin = lower, ymax = upper), 
+                      width = 0.2, size = 2, color = "#A23B72") +
+        
+        # محورهای کاملاً ثابت
+        coord_cartesian(ylim = c(y_min, y_max)) +
+        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
+        
         theme_minimal() +
         labs(
           title = paste("فاصله اطمینان", level * 100, "% برای میانگین"),
+          subtitle = paste("میانگین:", round(mean_val, 2), 
+                           " | فاصله: [", round(lower, 2), ",", round(upper, 2), "]",
+                           " | عرض:", round(upper - lower, 2)),
           x = "",
           y = "مقدار"
         ) +
-        geom_hline(yintercept = mean_val, linetype = "dashed", alpha = 0.5) +
-        theme(text = element_text(family = "Tahoma"),
-              axis.text = element_text(size = 12),
-              axis.title = element_text(size = 14))
+        
+        # خطوط راهنمای ثابت
+        geom_hline(yintercept = seq(0, 200, by = 20), 
+                   color = "gray90", size = 0.3, alpha = 0.7) +
+        geom_hline(yintercept = seq(0, 200, by = 100), 
+                   color = "gray80", size = 0.5, alpha = 0.7) +
+        
+        # نمایش مقادیر
+        geom_text(aes(y = lower_display, label = round(lower, 2)), 
+                  vjust = 1.5, color = "#A23B72", size = 4.5, family = "Tahoma") +
+        geom_text(aes(y = upper_display, label = round(upper, 2)), 
+                  vjust = -1.5, color = "#A23B72", size = 4.5, family = "Tahoma") +
+        geom_text(aes(y = mean_display, label = round(mean_val, 2)), 
+                  vjust = -2, color = "#2E86AB", size = 4.5, family = "Tahoma") +
+        
+        theme(
+          text = element_text(family = "Tahoma"),
+          plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+          plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray40"),
+          axis.text = element_text(size = 12),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()
+        )
     })
     
     output$ci_results <- renderPrint({
+      req(input$ci_mean, input$ci_sd, input$ci_n)
+      
       mean_val <- input$ci_mean
       sd_val <- input$ci_sd
       n <- input$ci_n
       level <- as.numeric(input$ci_level)
       
+      # محاسبات
       z_value <- qnorm(1 - (1 - level)/2)
       se <- sd_val / sqrt(n)
       margin <- z_value * se
       lower <- mean_val - margin
       upper <- mean_val + margin
       
-      cat("📊 نتایج فاصله اطمینان\n\n")
-      cat("سطح اطمینان:", level * 100, "%\n")
-      cat("میانگین نمونه:", round(mean_val, 2), "\n")
-      cat("انحراف معیار نمونه:", sd_val, "\n")
-      cat("حجم نمونه:", n, "\n")
-      cat("خطای استاندارد:", round(se, 2), "\n")
-      cat("حد پایین فاصله اطمینان:", round(lower, 2), "\n")
-      cat("حد بالای فاصله اطمینان:", round(upper, 2), "\n")
-      cat("عرض فاصله اطمینان:", round(upper - lower, 2), "\n")
-      cat("حاشیه خطا:", round(margin, 2), "\n\n")
+      cat("🎯 فاصله اطمینان", level * 100, "%\n")
+      cat("══════════════════════════════\n\n")
+      cat("📊 نتایج:\n")
+      cat("   میانگین نمونه: ", round(mean_val, 2), "\n")
+      cat("   فاصله اطمینان: [", round(lower, 2), ", ", round(upper, 2), "]\n")
+      cat("   عرض فاصله:    ", round(upper - lower, 2), "\n")
+      cat("   حاشیه خطا:    ", round(margin, 2), "\n\n")
       
-      cat("💡 تفسیر:\n")
-      cat("با اطمینان", level * 100, "٪، میانگین واقعی جامعه بین", 
-          round(lower, 2), "و", round(upper, 2), "قرار دارد.\n")
+      # هشدار اگر مقادیر خارج از محدوده باشند
+      if (lower < 0 | upper > 200) {
+        cat("⚠️  توجه: بخشی از فاصله اطمینان خارج از محدوده نمودار است\n")
+      }
     })
   })
+  
+  
   
   # شبیه‌ساز آزمون فرض
   observeEvent(input$calc_ht, {
@@ -4195,7 +4262,12 @@ server <- function(input, output, session) {
       p_value <- 2 * pnorm(-abs(z_value))  # دو دنباله
       
       # ایجاد نمودار توزیع نرمال
-      x <- seq(pop_mean - 4*se, pop_mean + 4*se, length.out = 100)
+      x_min <- min(pop_mean - 4*se, sample_mean - 2*se)
+      x_max <- max(pop_mean + 4*se, sample_mean + 2*se)
+      x_range <- max(abs(x_min - pop_mean), abs(x_max - pop_mean))
+      x_limits <- c(pop_mean - x_range, pop_mean + x_range)
+      
+      x <- seq(x_limits[1], x_limits[2], length.out = 100)
       y <- dnorm(x, mean = pop_mean, sd = se)
       df <- data.frame(x = x, y = y)
       
@@ -4212,6 +4284,7 @@ server <- function(input, output, session) {
                   fill = "red", alpha = 0.3) +
         geom_area(data = subset(df, x >= reject_region_upper), aes(x = x, y = y), 
                   fill = "red", alpha = 0.3) +
+        coord_cartesian(xlim = x_limits) +  # ثابت نگه داشتن محور x
         annotate("text", x = pop_mean, y = max(y)*0.9, 
                  label = paste("H₀: μ =", pop_mean), color = "red", size = 5) +
         annotate("text", x = sample_mean, y = max(y)*0.7, 
@@ -4274,6 +4347,61 @@ server <- function(input, output, session) {
     })
   })
   
+  # همچنین می‌توانیم یک شبیه‌ساز پیشرفته‌تر برای فاصله اطمینان اضافه کنیم:
+  # شبیه‌سار چندین فاصله اطمینان برای نمایش تغییرپذیری نمونه‌گیری
+  
+  output$ci_simulation_plot <- renderPlot({
+    set.seed(123)
+    n_simulations <- 20  # تعداد شبیه‌سازی‌ها
+    pop_mean <- 100      # میانگین واقعی جامعه
+    pop_sd <- 15         # انحراف معیار واقعی جامعه
+    n <- input$ci_n      # حجم نمونه از ورودی کاربر
+    level <- as.numeric(input$ci_level)
+    
+    # محاسبه z-value برای سطح اطمینان
+    z_value <- qnorm(1 - (1 - level)/2)
+    
+    # شبیه‌سازی چندین نمونه
+    results <- data.frame()
+    for (i in 1:n_simulations) {
+      sample_data <- rnorm(n, mean = pop_mean, sd = pop_sd)
+      sample_mean <- mean(sample_data)
+      sample_se <- sd(sample_data) / sqrt(n)
+      margin <- z_value * sample_se
+      lower <- sample_mean - margin
+      upper <- sample_mean + margin
+      contains_true <- (lower <= pop_mean) & (pop_mean <= upper)
+      
+      results <- rbind(results, data.frame(
+        simulation = i,
+        sample_mean = sample_mean,
+        lower = lower,
+        upper = upper,
+        contains_true = contains_true
+      ))
+    }
+    
+    # ایجاد نمودار
+    ggplot(results, aes(x = simulation, y = sample_mean)) +
+      geom_point(size = 2, color = "blue") +
+      geom_errorbar(aes(ymin = lower, ymax = upper, color = contains_true), 
+                    width = 0.3, size = 0.8) +
+      geom_hline(yintercept = pop_mean, linetype = "dashed", color = "red", size = 1) +
+      scale_color_manual(values = c("FALSE" = "red", "TRUE" = "darkgreen"),
+                         labels = c("FALSE" = "نمی‌پوشاند", "TRUE" = "می‌پوشاند"),
+                         name = "شامل میانگین واقعی") +
+      coord_cartesian(ylim = c(pop_mean - 30, pop_mean + 30)) +  # محور ثابت
+      theme_minimal() +
+      labs(
+        title = paste("شبیه‌سازی", n_simulations, "فاصله اطمینان", level * 100, "%"),
+        subtitle = paste("خط قرمز: میانگین واقعی جامعه (", pop_mean, ")"),
+        x = "شماره شبیه‌سازی",
+        y = "مقدار"
+      ) +
+      theme(text = element_text(family = "Tahoma"),
+            legend.position = "bottom")
+  })
+  
   # جدول راهنمای انتخاب آزمون
   output$test_selection_guide <- renderTable({
     data.frame(
@@ -4309,11 +4437,20 @@ server <- function(input, output, session) {
         Group = rep(c("گروه ۱", "گروه ۲"), c(input$group1_n, input$group2_n))
       )
       
+      # محدوده ثابت برای محور Y
+      y_min <- 0
+      y_max <- 200
+      
       # ایجاد نمودار
       ggplot(df, aes(x = Group, y = Value, fill = Group)) +
         geom_boxplot(alpha = 0.7, outlier.color = "red") +
         geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
         stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+        
+        # محورهای کاملاً ثابت
+        coord_cartesian(ylim = c(y_min, y_max)) +
+        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
+        
         scale_fill_brewer(palette = "Set2") +
         theme_minimal() +
         labs(
@@ -4324,6 +4461,7 @@ server <- function(input, output, session) {
         theme(text = element_text(family = "Tahoma"),
               legend.position = "none")
     })
+  })
     
     output$ttest_results <- renderPrint({
       # انجام آزمون t
@@ -4379,7 +4517,7 @@ server <- function(input, output, session) {
         cat("  نتیجه: تفاوت معنی‌دار بین دو گروه وجود ندارد\n")
       }
     })
-  })
+  
   
   # شبیه‌ساز آزمون من-ویتنی
   observeEvent(input$run_mwtest, {
@@ -4607,6 +4745,7 @@ server <- function(input, output, session) {
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
   # شبیه‌ساز ANOVA
+  
   observeEvent(input$run_anova, {
     output$anova_plot <- renderPlot({
       # تولید داده‌های مصنوعی
@@ -4614,13 +4753,11 @@ server <- function(input, output, session) {
       n_groups <- input$anova_n_groups
       n_per_group <- input$anova_n_per_group
       
-      # ایجاد بردارهای میانگین بر اساس تعداد گروه‌ها
       means <- c(input$group1_mean, input$group2_mean, input$group3_mean)
       if (n_groups >= 4) means <- c(means, input$group4_mean)
       if (n_groups >= 5) means <- c(means, input$group5_mean)
       if (n_groups >= 6) means <- c(means, input$group6_mean)
       
-      # تولید داده‌ها
       data_list <- list()
       group_labels <- c()
       
@@ -4635,11 +4772,20 @@ server <- function(input, output, session) {
         Group = factor(group_labels, levels = paste("گروه", 1:n_groups))
       )
       
+      # محدوده ثابت
+      y_min <- 0
+      y_max <- 200
+      
       # ایجاد نمودار
-      p1 <- ggplot(df, aes(x = Group, y = Value, fill = Group)) +
+      ggplot(df, aes(x = Group, y = Value, fill = Group)) +
         geom_boxplot(alpha = 0.7, outlier.color = "red") +
         geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
         stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+        
+        # محورهای کاملاً ثابت
+        coord_cartesian(ylim = c(y_min, y_max)) +
+        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
+        
         scale_fill_brewer(palette = "Set2") +
         theme_minimal() +
         labs(
@@ -4649,22 +4795,10 @@ server <- function(input, output, session) {
         ) +
         theme(text = element_text(family = "Tahoma"),
               legend.position = "none")
-      
-      p2 <- ggplot(df, aes(x = Value, fill = Group)) +
-        geom_density(alpha = 0.5) +
-        scale_fill_brewer(palette = "Set2") +
-        theme_minimal() +
-        labs(
-          title = "چگالی توزیع گروه‌ها",
-          x = "مقدار",
-          y = "چگالی"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "bottom")
-      
-      gridExtra::grid.arrange(p1, p2, ncol = 2)
     })
-    
+  })
+  
+  
     output$anova_results <- renderPrint({
       # تولید داده‌ها
       set.seed(123)
@@ -4762,7 +4896,7 @@ server <- function(input, output, session) {
         cat("  اثر بزرگ\n")
       }
     })
-  })
+  
   
   # شبیه‌ساز کراسکال-والیس
   observeEvent(input$run_kw, {
@@ -5696,6 +5830,7 @@ server <- function(input, output, session) {
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
   # شبیه‌ساز همبستگی پیرسون
+  # شبیه‌ساز همبستگی پیرسون - نسخه اصلاح شده
   observeEvent(input$run_pearson, {
     output$pearson_plot <- renderPlot({
       set.seed(123)
@@ -5712,10 +5847,17 @@ server <- function(input, output, session) {
       
       df <- data.frame(x = x, y = y)
       
+      # محدوده ثابت برای محورها
+      x_range <- max(abs(x))
+      y_range <- max(abs(y))
+      axis_limit <- max(x_range, y_range) * 1.1
+      
       # ایجاد نمودار
       ggplot(df, aes(x = x, y = y)) +
         geom_point(alpha = 0.6, color = "blue", size = 2) +
         geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+        coord_cartesian(xlim = c(-axis_limit, axis_limit), 
+                        ylim = c(-axis_limit, axis_limit)) +
         theme_minimal() +
         labs(
           title = paste("نمودار پراکندگی - همبستگی پیرسون"),
@@ -5809,7 +5951,7 @@ server <- function(input, output, session) {
         cat(" ❌ غیرنرمال\n")
       }
     })
-  })
+  })  # این براکت بسته کننده observeEvent بود که گم شده بود
   
   # شبیه‌ساز همبستگی اسپیرمن
   observeEvent(input$run_spearman, {
@@ -5981,10 +6123,17 @@ server <- function(input, output, session) {
       
       df <- data.frame(x = x, y = y)
       
+      # محدوده ثابت برای محورها
+      x_range <- max(abs(x))
+      y_range <- max(abs(y))
+      axis_limit <- max(x_range, y_range) * 1.1
+      
       # ایجاد نمودار
       ggplot(df, aes(x = x, y = y)) +
         geom_point(alpha = 0.6, color = "blue", size = 2) +
         geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+        coord_cartesian(xlim = c(-axis_limit, axis_limit),
+                        ylim = c(-axis_limit, axis_limit)) +
         theme_minimal() +
         labs(
           title = "رگرسیون خطی ساده",
@@ -5993,6 +6142,7 @@ server <- function(input, output, session) {
         ) +
         theme(text = element_text(family = "Tahoma"))
     })
+  })
     
     output$slr_results <- renderPrint({
       set.seed(123)
@@ -6042,7 +6192,6 @@ server <- function(input, output, session) {
         cat("  متغیر X پیش‌بین معنی‌داری برای Y نیست.\n")
       }
     })
-  })
   
   # شبیه‌ساز رگرسیون خطی چندگانه
   observeEvent(input$run_mlr, {
@@ -6578,7 +6727,7 @@ server <- function(input, output, session) {
             ifelse(cox_summary$coefficients["treatmentجدید", 2] < 1, "کاهش", "افزایش"),
             "خطر مرگ دارد (HR =", round(cox_summary$coefficients["treatmentجدید", 2], 3), ")\n")
       })
-    })
+    }) 
     
     # جدول خلاصه روش‌های تحلیل بقا
     output$survival_methods_table <- renderTable({
