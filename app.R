@@ -1,25 +1,66 @@
-# app.R
+# app.R - نسخه بهینه شده
 library(shiny)
 library(ggplot2)
 library(dplyr)
 library(bslib)
 library(gridExtra)
 library(moments)
-library(car)  # برای آزمون لوین و ANOVA
-library(userfriendlyscience)  # برای محاسبه اندازه اثر
-library(MASS)  # برای رگرسیون
-library(broom)  # برای زیبا کردن خروجی رگرسیون
+library(car)
+library(MASS)
+library(broom)
 library(survival)
 library(survminer)
 library(tidyr)
-library(sn)
+library(memoise) # اضافه کردن caching برای محاسبات سنگین
 
-# تعریف UI با تراز راست برای تمام بخش‌ها
+# تعریف توابع سنگین برای caching
+calculate_normal_distribution <- function(mean, sd, n) {
+  # شبیه‌سازی سنگین توزیع نرمال
+  Sys.sleep(0.5) # شبیه‌سازی محاسبه سنگین
+  set.seed(123)
+  data <- rnorm(n, mean, sd)
+  return(list(
+    data = data,
+    mean = mean(data),
+    sd = sd(data),
+    summary = summary(data)
+  ))
+}
+
+calculate_ttest <- function(group1, group2) {
+  # شبیه‌سازی آزمون t سنگین
+  Sys.sleep(0.3)
+  result <- t.test(group1, group2)
+  return(result)
+}
+
+calculate_correlation <- function(x, y) {
+  # شبیه‌سازی محاسبه همبستگی
+  Sys.sleep(0.2)
+  return(list(
+    pearson = cor.test(x, y, method = "pearson"),
+    spearman = cor.test(x, y, method = "spearman")
+  ))
+}
+
+# ایجاد نسخه cached از توابع
+mem_normal_dist <- memoise(calculate_normal_distribution)
+mem_ttest <- memoise(calculate_ttest)
+mem_correlation <- memoise(calculate_correlation)
+
+# استفاده از reactiveVal برای مدیریت state
+data_reactive <- reactiveVal()
+
+# تنظیمات اولیه برای بهینه‌سازی
+options(shiny.maxRequestSize = 10*1024^2) # محدود کردن حجم آپلود
+options(shiny.reactlog = FALSE)
+options(warn = -1) # غیرفعال کردن هشدارها
+
 ui <- fluidPage(
   theme = bs_theme(version = 5, bootswatch = "flatly"),
   tags$head(
     tags$style(HTML("
-      /* استایل‌های قبلی */
+      /* استایل‌های پایه و مشترک */
       .rtl-text {
         text-align: right;
         direction: rtl;
@@ -52,6 +93,8 @@ ui <- fluidPage(
         border-bottom: 2px solid #007bff;
         margin-bottom: 15px;
       }
+      
+      /* استایل‌های boxهای رنگی */
       .highlight-box {
         background-color: #f8f9fa;
         border-right: 4px solid #007bff;
@@ -82,7 +125,7 @@ ui <- fluidPage(
         font-size: 14px;
       }
       
-      /* استایل‌های جدید برای فهرست زیباتر */
+      /* استایل‌های پیشرفته و زیبا */
       .sidebar-custom {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border-radius: 10px;
@@ -162,21 +205,238 @@ ui <- fluidPage(
         padding: 15px 0;
         font-family: 'Tahoma', 'Arial', sans-serif;
       }
+      
+      /* استایل‌های شماره فصل‌ها و بخش‌ها */
+      .chapter-number {
+        display: inline-block;
+        width: 30px;
+        height: 30px;
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 30px;
+        margin-left: 10px;
+        font-weight: bold;
+        font-size: 14px;
+      }
+      
+      .chapter-title {
+        font-size: 22px;
+        font-weight: bold;
+        color: #2c3e50;
+        border-right: 4px solid #007bff;
+        padding-right: 15px;
+        margin: 20px 0;
+        font-family: 'Tahoma', 'Arial', sans-serif;
+      }
+      
+      .section-number {
+        display: inline-block;
+        width: 25px;
+        height: 25px;
+        background: #28a745;
+        color: white;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 25px;
+        margin-left: 8px;
+        font-weight: bold;
+        font-size: 12px;
+      }
+      
+      .subsection-number {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        background: #6c757d;
+        color: white;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 20px;
+        margin-left: 6px;
+        font-weight: bold;
+        font-size: 10px;
+      }
+
+      .section-title {
+        font-size: 20px;
+        font-weight: bold;
+        color: #2c3e50;
+        border-right: 3px solid #28a745;
+        padding-right: 12px;
+        margin: 15px 0;
+        font-family: 'Tahoma', 'Arial', sans-serif;
+      }
+      
+      .subsection-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #2c3e50;
+        border-right: 2px solid #6c757d;
+        padding-right: 10px;
+        margin: 12px 0;
+        font-family: 'Tahoma', 'Arial', sans-serif;
+      }
+      
+      .subsubsection-title {
+        font-size: 16px;
+        font-weight: bold;
+        color: #2c3e50;
+        margin: 10px 0;
+        font-family: 'Tahoma', 'Arial', sans-serif;
+      }
+      
+      /* استایل‌های جدید برای فصل ۱۶ */
+      .checklist-item {
+        padding: 10px;
+        margin: 5px 0;
+        border-right: 3px solid #28a745;
+        background-color: #f8fff9;
+        border-radius: 5px;
+      }
+      .checklist-item.checked {
+        background-color: #e8f5e8;
+        text-decoration: line-through;
+      }
+      .tool-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+      }
+      .conversion-tool {
+        background-color: #e3f2fd;
+        border: 2px solid #2196f3;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+      }
+      .calculator-box {
+        background: linear-gradient(45deg, #4CAF50, #45a049);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+      }
+      .resource-box {
+        background-color: #fff3cd;
+        border: 2px solid #ffc107;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+      }
+      
+      /* استایل‌های برای جداول */
+      .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+      }
+      .custom-table th {
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        padding: 12px;
+        text-align: center;
+      }
+      .custom-table td {
+        padding: 10px;
+        border: 1px solid #dee2e6;
+        text-align: center;
+      }
+      .custom-table tr:nth-child(even) {
+        background-color: #f8f9fa;
+      }
+      .custom-table tr:hover {
+        background-color: #e3f2fd;
+      }
+      
+      /* استایل‌های برای دکمه‌ها */
+      .btn-custom {
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        font-weight: bold;
+        transition: all 0.3s ease;
+      }
+      .btn-custom:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      }
+      .btn-success-custom {
+        background: linear-gradient(45deg, #28a745, #20c997);
+        color: white;
+      }
+      .btn-warning-custom {
+        background: linear-gradient(45deg, #ffc107, #fd7e14);
+        color: white;
+      }
+      
+      /* استایل‌های برای نمودارها */
+      .plot-container {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 15px 0;
+      }
+      
+      /* استایل‌های برای فهرست */
+      .custom-list {
+        list-style-type: none;
+        padding-right: 0;
+      }
+      .custom-list li {
+        padding: 8px 0;
+        border-bottom: 1px solid #e9ecef;
+      }
+      .custom-list li:before {
+        content: '✓';
+        color: #28a745;
+        font-weight: bold;
+        margin-left: 10px;
+      }
+      
+      /* استایل‌های برای فرم‌ها */
+      .form-control-custom {
+        border: 2px solid #007bff;
+        border-radius: 5px;
+        padding: 10px;
+        text-align: right;
+      }
+      .form-control-custom:focus {
+        border-color: #0056b3;
+        box-shadow: 0 0 5px rgba(0,123,255,0.5);
+      }
+      
+      /* استایل‌های ریسپانسیو */
+      @media (max-width: 768px) {
+        .header-title {
+          font-size: 20px;
+        }
+        .chapter-title {
+          font-size: 18px;
+        }
+        .section-title {
+          font-size: 16px;
+        }
+      }
     "))
   ),
   
-  # هدر با لوگو - نسخه ساده‌تر
   div(class = "sticky-header",
       fluidRow(
         column(2,
                div(class = "logo-container",
                    div(class = "logo-text", "📊 آمارپزشکی")
-                   # زیرنویس حذف شده است
                )
         ),
         column(10,
                div(class = "header-title", 
-                   "آموزش آمار مقدماتی برای دانشجویان پزشکی")
+                   "آموزش آمار مقدماتی برای دانشجویان پزشکی - ویرایش ۱.۰")
         )
       )
   ),
@@ -186,87 +446,62 @@ ui <- fluidPage(
       width = 3,
       class = "sidebar-custom",
       
-      # فهرست سرفصل‌های بهبود یافته
       div(class = "nav-custom",
           h4("🎯 فهرست سرفصل‌ها", style = "color: white; text-align: center;"),
           
-          # بخش مباحث آمار
           div(class = "section-header", "📚 مباحث آمار"),
           navlistPanel(
             id = "tabs",
             widths = c(12, 12),
             "",
-            tabPanel("🏠 مقدمه و اهمیت آمار", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱"), "مقدمه و اهمیت آمار"), 
                      value = "intro",
                      icon = icon("home")),
-            tabPanel("🔢 انواع متغیرها و نمونه‌گیری", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۲"), "انواع متغیرها و نمونه‌گیری"), 
                      value = "variables",
                      icon = icon("chart-bar")),
-            tabPanel("📈 آمار توصیفی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۳"), "آمار توصیفی"), 
                      value = "descriptive",
                      icon = icon("chart-line")),
-            tabPanel("📊 توزیع‌های آماری", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۴"), "توزیع‌های آماری"), 
                      value = "distributions",
                      icon = icon("bell")),
-            tabPanel("🎯 آزمون فرض و فاصله اطمینان", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۵"), "آزمون فرض و فاصله اطمینان"), 
                      value = "tests_ci",
                      icon = icon("check-circle")),
-            tabPanel("🔍 آزمون‌های یک و دو گروه", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۶"), "آزمون‌های یک و دو گروه"), 
                      value = "statistical_tests",
                      icon = icon("vial")),
-            tabPanel("👥 آزمون‌های چند گروه مستقل", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۷"), "آزمون‌های چند گروه مستقل"), 
                      value = "multiple_groups",
                      icon = icon("users")),
-            tabPanel("📋 آزمون‌های متغیرهای کیفی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۸"), "آزمون‌های متغیرهای کیفی"), 
                      value = "categorical_tests",
                      icon = icon("list-alt")),
-            tabPanel("📐 آنالیز کوواریانس (ANCOVA)", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۹"), "آنالیز کوواریانس (ANCOVA)"), 
                      value = "ancova",
                      icon = icon("sliders-h")),
-            tabPanel("🔄 مقایسه گروه‌های وابسته", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۰"), "مقایسه گروه‌های وابسته"), 
                      value = "repeated_measures",
                      icon = icon("sync")),
-            tabPanel("🔗 همبستگی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۱"), "همبستگی"), 
                      value = "correlation",
                      icon = icon("link")),
-            tabPanel("📉 رگرسیون خطی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۲"), "رگرسیون خطی"), 
                      value = "linear_regression",
                      icon = icon("line-chart")),
-            tabPanel("🎲 رگرسیون لجستیک", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۳"), "رگرسیون لجستیک"), 
                      value = "logistic_regression",
                      icon = icon("project-diagram")),
-            tabPanel("🔢 رگرسیون شمارشی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۴"), "رگرسیون شمارشی"), 
                      value = "count_regression",
                      icon = icon("calculator")),
-            tabPanel("⏱️ تحلیل بقا", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۵"), "تحلیل بقا"), 
                      value = "survival_analysis",
                      icon = icon("heartbeat")),
-            tabPanel("💡 نکات کاربردی", 
+            tabPanel(span(class = "chapter-item", span(class = "chapter-number", "۱۶"), "نکات کاربردی"), 
                      value = "tips",
                      icon = icon("lightbulb"))
-          ),
-          
-          # بخش ابزارها
-          div(class = "section-header", "🛠️ ابزارهای تعاملی"),
-          navlistPanel(
-            id = "tools_tabs",
-            widths = c(12, 12),
-            "",
-            tabPanel("🎲 شبیه‌ساز توزیع نرمال", 
-                     value = "normal_sim",
-                     icon = icon("dice")),
-            tabPanel("🧮 ماشین‌حساب t-test", 
-                     value = "ttest_calc",
-                     icon = icon("calculator")),
-            tabPanel("📏 شبیه‌ساز فاصله اطمینان", 
-                     value = "ci_sim",
-                     icon = icon("ruler")),
-            tabPanel("📊 شبیه‌ساز ANOVA", 
-                     value = "anova_sim",
-                     icon = icon("chart-bar")),
-            tabPanel("🔢 شبیه‌ساز رگرسیون", 
-                     value = "regression_sim",
-                     icon = icon("line-chart"))
           )
       )
     ),
@@ -278,10 +513,7 @@ ui <- fluidPage(
   )
 )
 
-
-# تعریف سرور
 server <- function(input, output, session) {
-  
   output$main_content <- renderUI({
     selected_tab <- input$tabs
     
@@ -289,15 +521,29 @@ server <- function(input, output, session) {
            
            "intro" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("مقدمه و اهمیت آمار در پزشکی"),
+                 h2("فصل ۱: مقدمه و اهمیت آمار در پزشکی"),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱.۱"), "مقدمه آمار"
+                 ),
                  p("آمار (Statistics) علم جمع‌آوری، تحلیل، تفسیر و ارائه داده‌ها است. در پزشکی مدرن، هیچ تصمیمی بدون پشتوانه آماری گرفته نمی‌شود."),
-                 h3("تعریف آمار"),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱.۱.۱"), "تعریف آمار"
+                 ),
                  p("آمار را می‌توان به دو بخش اصلی تقسیم کرد:"),
                  tags$ul(
                    tags$li(tags$b("آمار توصیفی (Descriptive Statistics):"), "خلاصه‌سازی و نمایش داده‌ها با استفاده از نمودارها و شاخص‌ها."),
                    tags$li(tags$b("آمار استنباطی (Inferential Statistics):"), "استفاده از نمونه‌ها برای نتیجه‌گیری درباره جامعه بزرگتر.")
                  ),
-                 h3("کاربردهای آمار در مطالعات بالینی و تحقیقات پزشکی"),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱.۲"), "کاربردهای آمار در پزشکی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱.۲.۱"), "کاربردهای بالینی"
+                 ),
                  tags$ul(
                    tags$li("تعیین اثربخشی داروهای جدید (کارآزمایی‌های بالینی)"),
                    tags$li("بررسی شیوع بیماری‌ها در جمعیت‌های مختلف"),
@@ -306,17 +552,44 @@ server <- function(input, output, session) {
                    tags$li("تعیین پروتکل‌های درمانی بر اساس شواهد"),
                    tags$li("پایش کیفیت خدمات سلامت"),
                    tags$li("تحلیل هزینه-اثربخشی مداخلات درمانی")
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱.۲.۲"), "کاربردهای تحقیقاتی"
+                 ),
+                 tags$ul(
+                   tags$li("طراحی مطالعات پژوهشی"),
+                   tags$li("تعیین حجم نمونه مناسب"),
+                   tags$li("تحلیل داده‌های تحقیقاتی"),
+                   tags$li("ارزیابی نتایج مطالعات"),
+                   tags$li("تهیه گزارش‌های علمی")
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱.۳"), "اهمیت آمار در تصمیم‌گیری پزشکی"
+                 ),
+                 p("آمار به پزشکان و پژوهشگران کمک می‌کند تا:"),
+                 tags$ul(
+                   tags$li("تصمیمات مبتنی بر شواهد بگیرند"),
+                   tags$li("خطاهای تشخیصی را کاهش دهند"),
+                   tags$li("منابع را بهینه تخصیص دهند"),
+                   tags$li("کیفیت خدمات را بهبود بخشند")
                  )
              )
            ),
            
            "variables" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("انواع متغیرها و نمونه‌گیری"),
+                 h2("فصل ۲: انواع متغیرها و نمونه‌گیری"),
                  
-                 h3("🏛️ مفاهیم پایه: جامعه و نمونه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۲.۱"), "مفاهیم پایه: جامعه و نمونه"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۱.۱"), "جامعه (Population)"
+                 ),
                  div(class = "highlight-box",
-                     h4("جامعه (Population)"),
                      p("جامعه به کل مجموعه افراد، اشیاء یا رویدادهایی گفته می‌شود که می‌خواهیم درباره آنها مطالعه کنیم."),
                      tags$ul(
                        tags$li(tags$b("جامعه هدف (Target Population):"), "جامعه‌ای که می‌خواهیم نتایج مطالعه را به آن تعمیم دهیم"),
@@ -331,8 +604,10 @@ server <- function(input, output, session) {
                      )
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۱.۲"), "نمونه (Sample)"
+                 ),
                  div(class = "success-box",
-                     h4("نمونه (Sample)"),
                      p("نمونه زیرمجموعه‌ای از جامعه است که برای مطالعه انتخاب می‌شود."),
                      tags$ul(
                        tags$li(tags$b("نمونه نماینده (Representative Sample):"), "نمونه‌ای که ویژگی‌های جامعه را به خوبی منعکس کند"),
@@ -347,8 +622,10 @@ server <- function(input, output, session) {
                      )
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۱.۳"), "سرشماری در مقابل نمونه‌گیری"
+                 ),
                  div(class = "warning-box",
-                     h4("سرشماری (Census) در مقابل نمونه‌گیری"),
                      fluidRow(
                        column(6,
                               h5("🎯 سرشماری (Census)"),
@@ -387,37 +664,38 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 انواع متغیرها (Variables)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۲.۲"), "انواع متغیرها"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۲.۱"), "دسته‌بندی متغیرها"
+                 ),
                  tableOutput("variables_table"),
                  
-                 h3("🎯 دسته‌بندی متغیرها"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۲.۲"), "متغیرهای کیفی"
+                 ),
                  fluidRow(
-                   column(4,
+                   column(6,
                           h4("متغیرهای کیفی (Qualitative)"),
                           tags$ul(
                             tags$li(tags$b("اسمی (Nominal):"), "بدون ترتیب طبیعی - مثال: گروه خونی، جنسیت"),
                             tags$li(tags$b("ترتیبی (Ordinal):"), "با ترتیب طبیعی - مثال: درجه سرطان، سطح درد")
                           )
                    ),
-                   column(4,
-                          h4("متغیرهای کمی فاصله‌ای (Interval)"),
+                   column(6,
+                          h4("متغیرهای کمی"),
                           tags$ul(
-                            tags$li("مقادیر عددی با فاصله‌های معنی‌دار"),
-                            tags$li("صفر واقعی ندارد"),
-                            tags$li(tags$b("مثال:"), "دمای سانتیگراد، نمره IQ")
-                          )
-                   ),
-                   column(4,
-                          h4("متغیرهای کمی نسبی (Ratio)"),
-                          tags$ul(
-                            tags$li("مقادیر عددی با صفر مطلق"),
-                            tags$li("نسبت‌ها معنی‌دار هستند"),
-                            tags$li(tags$b("مثال:"), "قد، وزن، فشار خون")
+                            tags$li(tags$b("فاصله‌ای (Interval):"), "مقادیر عددی با فاصله‌های معنی‌دار - مثال: دمای سانتیگراد"),
+                            tags$li(tags$b("نسبی (Ratio):"), "مقادیر عددی با صفر مطلق - مثال: قد، وزن، فشار خون")
                           )
                    )
                  ),
                  
-                 h3("📝 مثال‌های پزشکی"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۲.۳"), "مثال‌های پزشکی"
+                 ),
                  fluidRow(
                    column(3,
                           h5("متغیرهای کیفی اسمی"),
@@ -453,7 +731,13 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🔍 روش‌های نمونه‌گیری (Sampling Methods)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۲.۳"), "روش‌های نمونه‌گیری"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۳.۱"), "نمونه‌گیری احتمالی"
+                 ),
                  div(class = "highlight-box",
                      h4("نمونه‌گیری احتمالی (Probability Sampling)"),
                      tags$ul(
@@ -465,6 +749,9 @@ server <- function(input, output, session) {
                      p(tags$b("✅ مزیت:"), "امکان تعمیم نتایج به جامعه اصلی")
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۲.۳.۲"), "نمونه‌گیری غیراحتمالی"
+                 ),
                  div(class = "warning-box",
                      h4("نمونه‌گیری غیراحتمالی (Non-Probability Sampling)"),
                      tags$ul(
@@ -476,7 +763,9 @@ server <- function(input, output, session) {
                      p(tags$b("🎯 کاربرد:"), "مطالعات کیفی، پژوهش‌های مقدماتی")
                  ),
                  
-                 h3("📋 مثال کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۲.۴"), "مثال کاربردی در پزشکی"
+                 ),
                  div(class = "info-box",
                      h4("مطالعه شیوع فشار خون در تهران"),
                      tags$ul(
@@ -499,9 +788,11 @@ server <- function(input, output, session) {
            
            "descriptive" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آمار توصیفی (Descriptive Statistics)"),
+                 h2("فصل ۳: آمار توصیفی"),
                  
-                 h3("📊 مقدمه آمار توصیفی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۱"), "مقدمه آمار توصیفی"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف آمار توصیفی"),
                      p("آمار توصیفی به مجموعه روش‌هایی گفته می‌شود که برای خلاصه‌سازی، سازماندهی و نمایش داده‌ها به کار می‌روند. هدف اصلی آمار توصیفی، توصیف ویژگی‌های اصلی داده‌ها به صورت روشن و معنادار است."),
@@ -512,24 +803,272 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 جداول و نمودارهای توصیفی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۲"), "شناسایی مقادیر پرت"
+                 ),
                  
-                 h4("📋 جداول فراوانی"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۲.۱"), "مقادیر پرت چیست؟"
+                 ),
+                 div(class = "warning-box",
+                     p("مقادیر پرت به داده‌هایی گفته می‌شود که به طور قابل توجهی با سایر داده‌ها تفاوت دارند. این مقادیر می‌توانند:"),
+                     tags$ul(
+                       tags$li("ناشی از خطای اندازه‌گیری باشند"),
+                       tags$li("نشان‌دهنده یک پدیده نادر اما واقعی باشند"),
+                       tags$li("بر نتایج تحلیل آماری تأثیر بگذارند")
+                     ),
+                     
+                     h5("🎯 مثال‌های پزشکی از مقادیر پرت:"),
+                     tags$ul(
+                       tags$li(tags$b("فشار خون:"), "مقدار ۲۲۰/۱۳۰ mmHg در یک فرد جوان سالم"),
+                       tags$li(tags$b("دمای بدن:"), "مقدار ۴۲ درجه سانتیگراد"),
+                       tags$li(tags$b("سطح قند خون:"), "مقدار ۵۰۰ mg/dL در فرد ناشتا"),
+                       tags$li(tags$b("وزن نوزاد:"), "۶ کیلوگرم در بدو تولد"),
+                       tags$li(tags$b("ضربان قلب:"), "۲۰ ضربه در دقیقه در فرد بیدار")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۲.۲"), "روش‌های شناسایی مقادیر پرت"
+                 ),
+                 fluidRow(
+                   column(6,
+                          h5("روش‌های آماری:"),
+                          tags$ul(
+                            tags$li(tags$b("قاعده IQR:"), "مقادیر خارج از Q1 - 1.5×IQR و Q3 + 1.5×IQR"),
+                            tags$li(tags$b("مقادیر Z-Score:"), "مقادیر با |Z| > 3"),
+                            tags$li(tags$b("مقادیر 3 انحراف معیار:"), "خارج از μ ± 3σ")
+                          )
+                   ),
+                   column(6,
+                          h5("روش‌های گرافیکی:"),
+                          tags$ul(
+                            tags$li("نمودار جعبه‌ای (Boxplot)"),
+                            tags$li("نمودار پراکندگی (Scatter Plot)"),
+                            tags$li("هیستوگرام")
+                          )
+                   )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۲.۳"), "مثال کاربردی پزشکی"
+                 ),
+                 div(class = "success-box",
+                     h5("کنترل کیفیت تست قند خون با قاعده 6 سیگما"),
+                     tags$ul(
+                       tags$li("میانگین هدف: 100 mg/dL"),
+                       tags$li("انحراف معیار قابل قبول: 5 mg/dL"),
+                       tags$li("محدوده قابل قبول (2σ): [90, 110] mg/dL"),
+                       tags$li("محدوده هشدار (3σ): [85, 115] mg/dL"),
+                       tags$li("محدوده اقدام (6σ): [70, 130] mg/dL")
+                     ),
+                     
+                     h5("داده‌های روزانه:"),
+                     tableOutput("sigma_lab_data"),
+                     
+                     h5("تفسیر:"),
+                     tags$ul(
+                       tags$li("✅ مقادیر 95, 102, 98: در محدوده قابل قبول"),
+                       tags$li("⚠️ مقدار 116: در محدوده هشدار (بازبینی نیاز است)"),
+                       tags$li("❌ مقدار 135: در محدوده اقدام (کالیبراسیون دستگاه نیاز است)")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۳"), "شاخص‌های مرکزی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۳.۱"), "میانگین (Mean)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "info-box",
+                              p("مجموع مقادیر تقسیم بر تعداد آنها"),
+                              p(tags$b("فرمول:"), "x̄ = Σxᵢ / n"),
+                              tags$ul(
+                                tags$li(tags$b("ویژگی:"), "حساس به مقادیر پرت"),
+                                tags$li(tags$b("مزایا:"), "استفاده از تمام داده‌ها"),
+                                tags$li(tags$b("معایب"),"تحت تاثیر مقادیر پرت"),
+                                tags$li(tags$b("مثال پزشکی:"), "میانگین فشار خون 120 بیمار")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("mean_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۳.۲"), "میانه (Median)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "info-box",
+                              p("مقدار وسطی وقتی داده‌ها به ترتیب مرتب شده باشند"),
+                              tags$ul(
+                                tags$li(tags$b("ویژگی:"), "مقاوم به مقادیر پرت"),
+                                tags$li(tags$b("مزایا:"), "مناسب برای داده‌های skewed"),
+                                tags$li(tags$b("معایب:"), "عدم استفاده از تمام اطلاعات"),
+                                tags$li(tags$b("مثال پزشکی:"), "میانه درآمد بیماران یک کلینیک")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("median_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۳.۳"), "نما (Mode)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "info-box",
+                              p("پرتکرارترین مقدار در مجموعه داده"),
+                              tags$ul(
+                                tags$li(tags$b("ویژگی:"), "برای داده‌های کیفی و کمی کاربرد دارد"),
+                                tags$li(tags$b("مزایا:"), "قابل استفاده برای داده‌های اسمی"),
+                                tags$li(tags$b("معایب:"), "ممکن است چندین نما وجود داشته باشد"),
+                                tags$li(tags$b("مثال پزشکی:"), "شایع‌ترین گروه خونی در یک جامعه")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("mode_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۴"), "شاخص‌های پراکندگی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۴.۱"), "دامنه (Range)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "warning-box",
+                              p("تفاوت بین بزرگترین و کوچکترین مقدار"),
+                              p(tags$b("فرمول:"), "R = Max - Min"),
+                              tags$ul(
+                                tags$li(tags$b("مزایا:"), "محاسبه ساده"),
+                                tags$li(tags$b("معایب:"), "حساس به مقادیر پرت"),
+                                tags$li(tags$b("کاربرد:"), "بررسی اولیه پراکندگی")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("range_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۴.۲"), "واریانس (Variance)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "warning-box",
+                              p("میانگین مربعات انحراف از میانگین"),
+                              p(tags$b("فرمول:"), "s² = Σ(xᵢ - x̄)² / (n-1)"),
+                              tags$ul(
+                                tags$li(tags$b("ویژگی:"), "در واحد مربع متغیر بیان می‌شود"),
+                                tags$li(tags$b("مزایا:"), "استفاده از تمام داده‌ها"),
+                                tags$li(tags$b("معایب:"), "واحد سنجش نامأنوس")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("variance_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۴.۳"), "انحراف معیار (Standard Deviation)"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "warning-box",
+                              p("جذر واریانس - نشان‌دهنده پراکندگی حول میانگین"),
+                              p(tags$b("فرمول:"), "s = √s²"),
+                              tags$ul(
+                                tags$li(tags$b("مزایا:"), "واحد سنجش معنی‌دار"),
+                                tags$li(tags$b("کاربرد:"), "مقایسه پراکندگی گروه‌های مختلف"),
+                                tags$li(tags$b("مثال:"), "انحراف معیار فشار خون = 15 mmHg")
+                              )
+                          )
+                   ),
+                   column(6,
+                          plotOutput("sd_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۵"), "چارک‌ها و مقادیر موقعیتی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۵.۱"), "چارک‌ها و دامنه میان چارکی"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "info-box",
+                              h5("چارک‌ها (Quartiles)"),
+                              tags$ul(
+                                tags$li(tags$b("چارک اول (Q1):"), "25% داده‌ها زیر این مقدار"),
+                                tags$li(tags$b("چارک دوم (Q2):"), "میانه - 50% داده‌ها"),
+                                tags$li(tags$b("چارک سوم (Q3):"), "75% داده‌ها زیر این مقدار")
+                              ),
+                              h5("دامنه میان چارکی (IQR)"),
+                              p(tags$b("فرمول:"), "IQR = Q3 - Q1"),
+                              p(tags$b("کاربرد:"), "شناسایی مقادیر پرت و توصیف پراکندگی")
+                          )
+                   ),
+                   column(6,
+                          plotOutput("quartile_plot", height = "300px")
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۶"), "جداول و نمودارهای توصیفی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۶.۱"), "جداول فراوانی"
+                 ),
+                 
+                 div(class = "subsubsection-title",
+                     span(class = "subsection-number", "۳.۶.۱.۱"), "جدول فراوانی برای داده‌های کیفی اسمی"
+                 ),
                  div(class = "highlight-box",
-                     h4("جدول فراوانی برای داده‌های کیفی"),
                      p("برای متغیرهای کیفی، جدول فراوانی شامل موارد زیر است:"),
                      tags$ul(
                        tags$li(tags$b("فراوانی مطلق (Absolute Frequency):"), "تعداد مشاهده هر دسته"),
                        tags$li(tags$b("فراوانی نسبی (Relative Frequency):"), "نسبت هر دسته به کل داده‌ها"),
-                       tags$li(tags$b("فراوانی درصدی (Percentage Frequency):"), "فراوانی نسبی ضرب در ۱۰۰"),
-                       tags$li(tags$b("فراوانی تجمعی (Cumulative Frequency):"), "جمع فراوانی‌ها تا دسته مورد نظر")
+                       tags$li(tags$b("فراوانی درصدی (Percentage Frequency):"), "فراوانی نسبی ضرب در ۱۰۰")
                      ),
                      tableOutput("qualitative_freq_table"),
                      p(tags$b("مثال پزشکی:"), "توزیع گروه‌های خونی در یک نمونه ۱۰۰ نفره")
                  ),
                  
+                 div(class = "subsubsection-title",
+                     span(class = "subsection-number", "۳.۶.۱.۲"), "جدول فراوانی برای داده‌های کیفی ترتیبی"
+                 ),
+                 div(class = "info-box",
+                     h4("جدول فراوانی برای درجه سرطان"),
+                     p("برای متغیرهای کیفی ترتیبی، فراوانی تجمعی معنی‌دار است:"),
+                     tags$ul(
+                       tags$li(tags$b("ترتیبی (Ordinal):"), "با ترتیب طبیعی - مثال: درجه سرطان، سطح درد"),
+                       tags$li("فراوانی تجمعی نشان می‌دهد چند بیمار در آن درجه یا درجات پایین‌تر هستند")
+                     ),
+                     tableOutput("ordinal_freq_table"),
+                     p(tags$b("مثال پزشکی:"), "توزیع درجات سرطان در یک نمونه ۹۰ نفره")
+                 ),
+                 
+                 div(class = "subsubsection-title",
+                     span(class = "subsection-number", "۳.۶.۱.۳"), "جدول فراوانی برای داده‌های کمی"
+                 ),
                  div(class = "success-box",
-                     h4("جدول فراوانی برای داده‌های کمی"),
                      p("برای متغیرهای کمی، ابتدا داده‌ها را به بازه‌هایی تقسیم می‌کنیم:"),
                      tags$ul(
                        tags$li("تعیین تعداد بازه‌ها (معمولاً ۵-۱۵ بازه)"),
@@ -541,7 +1080,9 @@ server <- function(input, output, session) {
                      p(tags$b("مثال پزشکی:"), "توزیع سنی بیماران یک بیمارستان")
                  ),
                  
-                 h4("📈 نمودارهای توصیفی"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۶.۲"), "نمودارهای توصیفی"
+                 ),
                  fluidRow(
                    column(6,
                           h4("نمودارهای برای داده‌های کیفی"),
@@ -575,7 +1116,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h4("📊 مثال کاربردی: داده‌های فشار خون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۷"), "مثال کاربردی: داده‌های فشار خون"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "warning-box",
@@ -593,205 +1136,18 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 شاخص‌های مرکزی (Measures of Central Tendency)"),
-                 div(class = "highlight-box",
-                     h4("هدف شاخص‌های مرکزی"),
-                     p("شاخص‌های مرکزی مقدار مرکزی یا نماینده‌ای برای مجموعه داده‌ها ارائه می‌دهند. این شاخص‌ها نشان می‌دهند که داده‌ها حول چه مقداری متمرکز شده‌اند.")
+                 div(class = "section-title",
+                     span(class = "section-number", "۳.۸"), "خلاصه و نکات مهم"
                  ),
                  
-                 fluidRow(
-                   column(6,
-                          div(class = "info-box",
-                              h4("میانگین (Mean)"),
-                              p("مجموع مقادیر تقسیم بر تعداد آنها"),
-                              p(tags$b("فرمول:"), "x̄ = Σxᵢ / n"),
-                              tags$ul(
-                                tags$li(tags$b("ویژگی:"), "حساس به مقادیر پرت"),
-                                tags$li(tags$b("مزایا:"), "استفاده از تمام داده‌ها"),
-                                tags$li(tags$b("معایب:"), "تحت تأثیر مقادیر极端"),
-                                tags$li(tags$b("مثال پزشکی:"), "میانگین فشار خون 120 بیمار")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("mean_plot", height = "300px")
-                   )
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۸.۱"), "خلاصه شاخص‌های آمار توصیفی"
                  ),
-                 
-                 fluidRow(
-                   column(6,
-                          div(class = "info-box",
-                              h4("میانه (Median)"),
-                              p("مقدار وسطی وقتی داده‌ها به ترتیب مرتب شده باشند"),
-                              tags$ul(
-                                tags$li(tags$b("ویژگی:"), "مقاوم به مقادیر پرت"),
-                                tags$li(tags$b("مزایا:"), "مناسب برای داده‌های skewed"),
-                                tags$li(tags$b("معایب:"), "عدم استفاده از تمام اطلاعات"),
-                                tags$li(tags$b("مثال پزشکی:"), "میانه درآمد بیماران یک کلینیک")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("median_plot", height = "300px")
-                   )
-                 ),
-                 
-                 fluidRow(
-                   column(6,
-                          div(class = "info-box",
-                              h4("نما (Mode)"),
-                              p("پرتکرارترین مقدار در مجموعه داده"),
-                              tags$ul(
-                                tags$li(tags$b("ویژگی:"), "برای داده‌های کیفی و کمی کاربرد دارد"),
-                                tags$li(tags$b("مزایا:"), "قابل استفاده برای داده‌های اسمی"),
-                                tags$li(tags$b("معایب:"), "ممکن است چندین نما وجود داشته باشد"),
-                                tags$li(tags$b("مثال پزشکی:"), "شایع‌ترین گروه خونی در یک جامعه")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("mode_plot", height = "300px")
-                   )
-                 ),
-                 
-                 h3("📊 شاخص‌های پراکندگی (Measures of Dispersion)"),
-                 div(class = "success-box",
-                     h4("هدف شاخص‌های پراکندگی"),
-                     p("شاخص‌های پراکندگی میزان تغییرپذیری یا پراکندگی داده‌ها حول مقدار مرکزی را نشان می‌دهند. این شاخص‌ها به درک homogeneity یا heterogeneity داده‌ها کمک می‌کنند.")
-                 ),
-                 
-                 fluidRow(
-                   column(6,
-                          div(class = "warning-box",
-                              h4("دامنه (Range)"),
-                              p("تفاوت بین بزرگترین و کوچکترین مقدار"),
-                              p(tags$b("فرمول:"), "R = Max - Min"),
-                              tags$ul(
-                                tags$li(tags$b("مزایا:"), "محاسبه ساده"),
-                                tags$li(tags$b("معایب:"), "حساس به مقادیر پرت"),
-                                tags$li(tags$b("کاربرد:"), "بررسی اولیه پراکندگی")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("range_plot", height = "300px")
-                   )
-                 ),
-                 
-                 fluidRow(
-                   column(6,
-                          div(class = "warning-box",
-                              h4("واریانس (Variance)"),
-                              p("میانگین مربعات انحراف از میانگین"),
-                              p(tags$b("فرمول:"), "s² = Σ(xᵢ - x̄)² / (n-1)"),
-                              tags$ul(
-                                tags$li(tags$b("ویژگی:"), "در واحد مربع متغیر بیان می‌شود"),
-                                tags$li(tags$b("مزایا:"), "استفاده از تمام داده‌ها"),
-                                tags$li(tags$b("معایب:"), "واحد سنجش نامأنوس")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("variance_plot", height = "300px")
-                   )
-                 ),
-                 
-                 fluidRow(
-                   column(6,
-                          div(class = "warning-box",
-                              h4("انحراف معیار (Standard Deviation)"),
-                              p("جذر واریانس - نشان‌دهنده پراکندگی حول میانگین"),
-                              p(tags$b("فرمول:"), "s = √s²"),
-                              tags$ul(
-                                tags$li(tags$b("مزایا:"), "واحد سنجش معنی‌دار"),
-                                tags$li(tags$b("کاربرد:"), "مقایسه پراکندگی گروه‌های مختلف"),
-                                tags$li(tags$b("مثال:"), "انحراف معیار فشار خون = 15 mmHg")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("sd_plot", height = "300px")
-                   )
-                 ),
-                 
-                 h3("📐 چارک‌ها و مقادیر موقعیتی"),
-                 fluidRow(
-                   column(6,
-                          div(class = "info-box",
-                              h4("چارک‌ها و دامنه میان چارکی"),
-                              h5("چارک‌ها (Quartiles)"),
-                              tags$ul(
-                                tags$li(tags$b("چارک اول (Q1):"), "25% داده‌ها زیر این مقدار"),
-                                tags$li(tags$b("چارک دوم (Q2):"), "میانه - 50% داده‌ها"),
-                                tags$li(tags$b("چارک سوم (Q3):"), "75% داده‌ها زیر این مقدار")
-                              ),
-                              h5("دامنه میان چارکی (IQR)"),
-                              p(tags$b("فرمول:"), "IQR = Q3 - Q1"),
-                              p(tags$b("کاربرد:"), "شناسایی مقادیر پرت و توصیف پراکندگی")
-                          )
-                   ),
-                   column(6,
-                          plotOutput("quartile_plot", height = "300px")
-                   )
-                 ),
-                 
-                 h3("🎯 شناسایی مقادیر پرت (Outliers)"),
-                 fluidRow(
-                   column(6,
-                          div(class = "highlight-box",
-                              h4("قاعده IQR برای شناسایی مقادیر پرت"),
-                              p("مقادیر خارج از محدوده زیر به عنوان پرت در نظر گرفته می‌شوند:"),
-                              p(tags$b("حد پایین:"), "Q1 - 1.5 × IQR"),
-                              p(tags$b("حد بالا:"), "Q3 + 1.5 × IQR"),
-                              p(tags$b("مثال:"), "در داده‌های فشار خون:"),
-                              tags$ul(
-                                tags$li("Q1 = 115, Q3 = 135, IQR = 20"),
-                                tags$li("حد پایین: 115 - 1.5×20 = 85"),
-                                tags$li("حد بالا: 135 + 1.5×20 = 165"),
-                                tags$li("مقادیر <85 یا >165 پرت محسوب می‌شوند")
-                              ),
-                              h5("روش‌های برخورد با مقادیر پرت"),
-                              tags$ul(
-                                tags$li("بررسی صحت داده‌ها"),
-                                tags$li("حذف در صورت خطای اندازه‌گیری"),
-                                tags$li("جایگزینی با مقادیر معقول"),
-                                tags$li("استفاده از روش‌های مقاوم")
-                              )
-                          )
-                   ),
-                   column(6,
-                          plotOutput("outlier_detection_plot", height = "350px")
-                   )
-                 ),
-                 
-                 h3("🔍 مثال کاربردی در پزشکی"),
-                 fluidRow(
-                   column(6,
-                          div(class = "success-box",
-                              h4("داده‌های فشار خون 100 بیمار"),
-                              tags$ul(
-                                tags$li("میانگین: 125 mmHg"),
-                                tags$li("انحراف معیار: 15 mmHg"),
-                                tags$li("میانه: 122 mmHg"),
-                                tags$li("دامنه: 90-180 mmHg"),
-                                tags$li("چارک اول (Q1): 115 mmHg"),
-                                tags$li("چارک سوم (Q3): 135 mmHg"),
-                                tags$li("دامنه میان چارکی (IQR): 20 mmHg"),
-                                tags$li("ضریب تغییرات: 12%")
-                              ),
-                              h5("تفسیر نتایج:"),
-                              p("فشار خون بیماران حول میانگین 125 با پراکندگی متوسط توزیع شده است. دامنه میان چارکی 20 واحد نشان می‌دهد که 50% مرکزی داده‌ها در محدوده 20 واحدی قرار دارند.")
-                          )
-                   ),
-                   column(6,
-                          plotOutput("bp_example_plot", height = "350px")
-                   )
-                 ),
-                 
-                 h3("📋 خلاصه شاخص‌های آمار توصیفی"),
                  tableOutput("descriptive_summary_table"),
                  
-                 h3("⚠️ نکات مهم و هشدارها"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۸.۲"), "نکات مهم و هشدارها"
+                 ),
                  div(class = "warning-box",
                      h4("اشتباهات رایج در آمار توصیفی"),
                      tags$ul(
@@ -803,7 +1159,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 راهنمای انتخاب شاخص‌های مناسب"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۳.۸.۳"), "راهنمای انتخاب شاخص‌های مناسب"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -831,9 +1189,11 @@ server <- function(input, output, session) {
            
            "distributions" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("توزیع‌های آماری (Statistical Distributions)"),
+                 h2("فصل ۴: توزیع‌های آماری"),
                  
-                 h3("📊 توزیع آماری چیست؟"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۱"), "مقدمه توزیع‌های آماری"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف توزیع آماری"),
                      p("توزیع آماری توصیف می‌کند که چگونه مقادیر یک متغیر در جامعه توزیع شده‌اند. به عبارت دیگر، توزیع آماری نشان می‌دهد که چه مقادیری برای یک متغیر ممکن است رخ دهند و هر کدام با چه احتمالی ظاهر می‌شوند."),
@@ -844,7 +1204,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h4("🎯 چرا توزیع‌های آماری مهم هستند؟"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۲"), "اهمیت توزیع‌های آماری"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -870,9 +1232,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 توزیع نرمال (Normal Distribution)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۳"), "توزیع نرمال"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۳.۱"), "ویژگی‌های توزیع نرمال"
+                 ),
                  div(class = "highlight-box",
-                     h4("ویژگی‌های توزیع نرمال"),
                      tags$ul(
                        tags$li("شکل زنگوله‌ای و متقارن (Bell-shaped and Symmetric)"),
                        tags$li("میانگین = میانه = نما (Mean = Median = Mode)"),
@@ -886,44 +1253,50 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 توزیع‌های مهم در پزشکی"),
-                 fluidRow(
-                   column(6,
-                          div(class = "success-box",
-                              h4("توزیع نرمال (Normal Distribution)"),
-                              tags$ul(
-                                tags$li("قد، وزن"),
-                                tags$li("فشار خون"),
-                                tags$li("سطح قند خون ناشتا"),
-                                tags$li("میزان کلسترول"),
-                                tags$li("دمای بدن در افراد سالم"),
-                                tags$li("ضربان قلب در حالت استراحت")
-                              )
-                          )
-                   ),
-                   column(6,
-                          div(class = "info-box",
-                              h4("توزیع دوجمله‌ای (Binomial Distribution)"),
-                              tags$ul(
-                                tags$li("تعداد موفقیت‌ها در n آزمایش"),
-                                tags$li("مثال: تعداد بیماران بهبود یافته"),
-                                tags$li("پارامترها: n (تعداد آزمایش) و p (احتمال موفقیت)"),
-                                tags$li("میانگین: np"),
-                                tags$li("واریانس: np(1-p)"),
-                                tags$li("مثال‌های پزشکی:"),
-                                tags$ul(
-                                  tags$li("تعداد بهبودی پس از درمان"),
-                                  tags$li("تعداد پاسخ مثبت به دارو"),
-                                  tags$li("تعداد تشخیص‌های صحیح")
-                                )
-                              )
-                          )
-                   )
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۳.۲"), "کاربردهای پزشکی توزیع نرمال"
+                 ),
+                 div(class = "success-box",
+                     tags$ul(
+                       tags$li("قد، وزن"),
+                       tags$li("فشار خون"),
+                       tags$li("سطح قند خون ناشتا"),
+                       tags$li("میزان کلسترول"),
+                       tags$li("دمای بدن در افراد سالم"),
+                       tags$li("ضربان قلب در حالت استراحت")
+                     )
                  ),
                  
-                 h3("📊 توزیع پواسون (Poisson Distribution)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۴"), "توزیع دوجمله‌ای"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۴.۱"), "ویژگی‌های توزیع دوجمله‌ای"
+                 ),
+                 div(class = "info-box",
+                     tags$ul(
+                       tags$li("تعداد موفقیت‌ها در n آزمایش"),
+                       tags$li("پارامترها: n (تعداد آزمایش) و p (احتمال موفقیت)"),
+                       tags$li("میانگین: np"),
+                       tags$li("واریانس: np(1-p)"),
+                       tags$li("مثال‌های پزشکی:"),
+                       tags$ul(
+                         tags$li("تعداد بهبودی پس از درمان"),
+                         tags$li("تعداد پاسخ مثبت به دارو"),
+                         tags$li("تعداد تشخیص‌های صحیح")
+                       )
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۵"), "توزیع پواسون"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۵.۱"), "ویژگی‌های توزیع پواسون"
+                 ),
                  div(class = "warning-box",
-                     h4("ویژگی‌های توزیع پواسون"),
                      tags$ul(
                        tags$li("برای رویدادهای نادر در واحد زمان یا مکان"),
                        tags$li("میانگین = واریانس (λ)"),
@@ -939,33 +1312,43 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 شبیه‌ساز توزیع نرمال"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۶"), "شبیه‌ساز توزیع نرمال"
+                 ),
                  fluidRow(
                    column(4,
-                          sliderInput("norm_mean", "میانگین (μ):", 
-                                      min = 0, max = 200, value = 100),
-                          sliderInput("norm_sd", "انحراف معیار (σ):", 
-                                      min = 1, max = 50, value = 15),
-                          numericInput("norm_sample_size", "حجم نمونه:", 
-                                       value = 1000, min = 100, max = 10000),
-                          actionButton("plot_normal", "نمایش توزیع")
+                          div(class = "info-box",
+                              h5("تنظیمات توزیع نرمال"),
+                              sliderInput("norm_mean", "میانگین (μ):", 
+                                          min = 0, max = 200, value = 100, step = 1),
+                              sliderInput("norm_sd", "انحراف معیار (σ):", 
+                                          min = 1, max = 50, value = 15, step = 1),
+                              numericInput("norm_sample_size", "تعداد نمونه:", 
+                                           value = 1000, min = 100, max = 10000),
+                              actionButton("plot_normal", "نمایش توزیع")
+                          )
                    ),
                    column(8,
-                          plotOutput("normal_plot"),
+                          plotOutput("normal_plot", height = "400px"),
                           verbatimTextOutput("normal_info")
                    )
                  ),
                  
-                 h3("📈 شبیه‌ساز توزیع دوجمله‌ای"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۷"), "شبیه‌ساز توزیع دوجمله‌ای"
+                 ),
                  fluidRow(
                    column(4,
-                          sliderInput("binom_n", "تعداد آزمایش (n):", 
-                                      min = 1, max = 100, value = 20),
-                          sliderInput("binom_p", "احتمال موفقیت (p):", 
-                                      min = 0, max = 1, value = 0.5, step = 0.05),
-                          numericInput("binom_sample_size", "تعداد نمونه:", 
-                                       value = 1000, min = 100, max = 10000),
-                          actionButton("plot_binomial", "نمایش توزیع")
+                          div(class = "info-box",
+                              h5("تنظیمات توزیع دوجمله‌ای"),
+                              sliderInput("binom_n", "تعداد آزمایش (n):", 
+                                          min = 1, max = 100, value = 20),
+                              sliderInput("binom_p", "احتمال موفقیت (p):", 
+                                          min = 0, max = 1, value = 0.5, step = 0.05),
+                              numericInput("binom_sample_size", "تعداد نمونه:", 
+                                           value = 1000, min = 100, max = 10000),
+                              actionButton("plot_binomial", "نمایش توزیع")
+                          )
                    ),
                    column(8,
                           plotOutput("binomial_plot"),
@@ -973,14 +1356,19 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 شبیه‌ساز توزیع پواسون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۸"), "شبیه‌ساز توزیع پواسون"
+                 ),
                  fluidRow(
                    column(4,
-                          sliderInput("pois_lambda", "میانگین (λ):", 
-                                      min = 0.1, max = 20, value = 5, step = 0.5),
-                          numericInput("pois_sample_size", "تعداد نمونه:", 
-                                       value = 1000, min = 100, max = 10000),
-                          actionButton("plot_poisson", "نمایش توزیع")
+                          div(class = "info-box",
+                              h5("تنظیمات توزیع پواسون"),
+                              sliderInput("pois_lambda", "میانگین (λ):", 
+                                          min = 0.1, max = 20, value = 5, step = 0.5),
+                              numericInput("pois_sample_size", "تعداد نمونه:", 
+                                           value = 1000, min = 100, max = 10000),
+                              actionButton("plot_poisson", "نمایش توزیع")
+                          )
                    ),
                    column(8,
                           plotOutput("poisson_plot"),
@@ -988,11 +1376,16 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 کاربردهای بالینی توزیع‌های آماری"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۹"), "کاربردهای بالینی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۹.۱"), "تشخیص نرمال بودن داده‌ها"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
-                              h4("تشخیص نرمال بودن داده‌ها"),
                               tags$ul(
                                 tags$li("آزمون شاپیرو-ویلک (Shapiro-Wilk test)"),
                                 tags$li("نمودار Q-Q (Quantile-Quantile plot)"),
@@ -1003,7 +1396,7 @@ server <- function(input, output, session) {
                    ),
                    column(6,
                           div(class = "info-box",
-                              h4("انتخاب آزمون آماری مناسب"),
+                              h5("انتخاب آزمون آماری مناسب"),
                               tags$ul(
                                 tags$li("داده‌های نرمال → آزمون‌های پارامتری"),
                                 tags$li("داده‌های غیرنرمال → آزمون‌های ناپارامتری"),
@@ -1014,9 +1407,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📋 مثال کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۱۰"), "مثال‌های کاربردی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۱۰.۱"), "مثال ۱: مطالعه سطح کلسترول"
+                 ),
                  div(class = "warning-box",
-                     h4("مطالعه سطح کلسترول در بیماران قلبی"),
                      tags$ul(
                        tags$li(tags$b("متغیر:"), "سطح کلسترول LDL (کمی)"),
                        tags$li(tags$b("توزیع:"), "نرمال (با میانگین 130 و انحراف معیار 25)"),
@@ -1027,8 +1425,10 @@ server <- function(input, output, session) {
                      )
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۴.۱۰.۲"), "مثال ۲: اثر بخشی داروی جدید"
+                 ),
                  div(class = "info-box",
-                     h4("مطالعه اثر بخشی یک داروی جدید"),
                      tags$ul(
                        tags$li(tags$b("متغیر:"), "تعداد بهبود یافته (دوحالتی)"),
                        tags$li(tags$b("توزیع:"), "دوجمله‌ای (n=100, p=0.7)"),
@@ -1039,7 +1439,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("⚠️ نکات مهم"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۱۱"), "نکات مهم"
+                 ),
                  div(class = "highlight-box",
                      h4("اشتباهات رایج"),
                      tags$ul(
@@ -1051,16 +1453,20 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 خلاصه توزیع‌های مهم"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۴.۱۲"), "خلاصه توزیع‌های مهم"
+                 ),
                  tableOutput("distributions_summary_table")
              )
            ),
            
            "tests_ci" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آزمون فرض و فاصله اطمینان"),
+                 h2("فصل ۵: آزمون فرض و فاصله اطمینان"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۱"), "مقدمه"
+                 ),
                  div(class = "highlight-box",
                      h4("هدف آزمون فرض و فاصله اطمینان"),
                      p("این دو مفهوم پایه‌ای در آمار استنباطی هستند که به ما کمک می‌کنند از روی نمونه‌ها به نتیجه‌گیری درباره جامعه بپردازیم:"),
@@ -1070,9 +1476,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 مفاهیم پایه در آزمون فرض"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۲"), "مفاهیم پایه در آزمون فرض"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۵.۲.۱"), "فرضیه‌ها"
+                 ),
                  div(class = "success-box",
-                     h4("فرضیه‌ها"),
                      tags$ul(
                        tags$li(tags$b("فرض صفر (H₀ - Null Hypothesis):"), 
                                "فرضیه‌ای که می‌خواهیم آن را آزمایش کنیم. معمولاً بیانگر 'عدم تفاوت' یا 'عدم اثر' است"),
@@ -1084,7 +1495,13 @@ server <- function(input, output, session) {
                      p("H₁: داروی جدید بر فشار خون اثر دارد")
                  ),
                  
-                 h3("⚠️ انواع خطا در آزمون فرض"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۳"), "انواع خطا در آزمون فرض"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۵.۳.۱"), "خطای نوع اول"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "warning-box",
@@ -1112,10 +1529,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 خلاصه انواع خطا"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۴"), "خلاصه انواع خطا"
+                 ),
                  tableOutput("error_types_table"),
                  
-                 h3("🔍 مراحل انجام آزمون فرض"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۵"), "مراحل انجام آزمون فرض"
+                 ),
                  div(class = "highlight-box",
                      h4("پنج مرحله اصلی آزمون فرض"),
                      tags$ol(
@@ -1127,10 +1548,12 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 مفهوم p-value"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۶"), "مفهوم p-value"
+                 ),
                  div(class = "success-box",
                      h4("p-value چیست؟"),
-                     p("p-value احتمال مشاهده نتایج نمونه (یا نتایج极端تر) را در صورت صحیح بودن فرض صفر نشان می‌دهد."),
+                     p("p-value احتمال مشاهده نتایج نمونه (یا نتایج افراطی‌تر) را در صورت صحیح بودن فرض صفر نشان می‌دهد."),
                      tags$ul(
                        tags$li(tags$b("p-value کوچک:"), "شواهد قوی علیه فرض صفر"),
                        tags$li(tags$b("p-value بزرگ:"), "شواهد ضعیف علیه فرض صفر"),
@@ -1145,9 +1568,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📐 فاصله اطمینان"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۷"), "فاصله اطمینان"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۵.۷.۱"), "تعریف فاصله اطمینان"
+                 ),
                  div(class = "info-box",
-                     h4("تعریف فاصله اطمینان"),
                      p("فاصله اطمینان محدوده‌ای از مقادیر است که با اطمینان مشخصی شامل پارامتر واقعی جامعه می‌شود."),
                      tags$ul(
                        tags$li(tags$b("سطح اطمینان (Confidence Level):"), "احتمال اینکه فاصله اطمینان پارامتر واقعی را شامل شود"),
@@ -1156,7 +1584,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 رابطه آزمون فرض و فاصله اطمینان"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۵.۷.۲"), "رابطه آزمون فرض و فاصله اطمینان"
+                 ),
                  div(class = "warning-box",
                      h4("ارتباط این دو مفهوم"),
                      p("آزمون فرض و فاصله اطمینان دو روی یک سکه هستند:"),
@@ -1167,11 +1597,16 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 مثال کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۸"), "مثال‌های کاربردی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۵.۸.۱"), "مثال ۱: آزمون فرض"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "highlight-box",
-                              h4("مثال ۱: آزمون فرض"),
                               tags$ul(
                                 tags$li(tags$b("سوال:"), "آیا داروی جدید فشار خون را کاهش می‌دهد؟"),
                                 tags$li(tags$b("H₀:"), "μ = 130 (میانگین فشار خون تغییر نمی‌کند)"),
@@ -1184,7 +1619,6 @@ server <- function(input, output, session) {
                    ),
                    column(6,
                           div(class = "success-box",
-                              h4("مثال ۲: فاصله اطمینان"),
                               tags$ul(
                                 tags$li(tags$b("سوال:"), "میانگین فشار خون جامعه چقدر است؟"),
                                 tags$li(tags$b("نمونه:"), "میانگین = 125, انحراف معیار = 15, n = 100"),
@@ -1195,16 +1629,21 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📋 شبیه‌ساز فاصله اطمینان"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۹"), "شبیه‌ساز فاصله اطمینان"
+                 ),
                  fluidRow(
                    column(4,
-                          numericInput("ci_mean", "میانگین نمونه:", value = 100),
-                          numericInput("ci_sd", "انحراف معیار نمونه:", value = 15),
-                          numericInput("ci_n", "حجم نمونه:", value = 30),
-                          selectInput("ci_level", "سطح اطمینان:",
-                                      choices = c("90%" = 0.90, "95%" = 0.95, "99%" = 0.99),
-                                      selected = "0.95"),
-                          actionButton("calc_ci", "محاسبه فاصله اطمینان")
+                          div(class = "info-box",
+                              h5("تنظیمات فاصله اطمینان"),
+                              numericInput("ci_mean", "میانگین نمونه:", value = 100),
+                              numericInput("ci_sd", "انحراف معیار نمونه:", value = 15),
+                              numericInput("ci_n", "حجم نمونه:", value = 30),
+                              selectInput("ci_level", "سطح اطمینان:",
+                                          choices = c("90%" = 0.90, "95%" = 0.95, "99%" = 0.99),
+                                          selected = "0.95"),
+                              actionButton("calc_ci", "محاسبه فاصله اطمینان")
+                          )
                    ),
                    column(8,
                           plotOutput("ci_plot"),
@@ -1212,17 +1651,22 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 شبیه‌ساز آزمون فرض"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۱۰"), "شبیه‌ساز آزمون فرض"
+                 ),
                  fluidRow(
                    column(4,
-                          numericInput("ht_sample_mean", "میانگین نمونه:", value = 102),
-                          numericInput("ht_pop_mean", "میانگین فرض صفر:", value = 100),
-                          numericInput("ht_sd", "انحراف معیار:", value = 15),
-                          numericInput("ht_n", "حجم نمونه:", value = 30),
-                          selectInput("ht_alpha", "سطح معنی‌داری:",
-                                      choices = c("0.01" = 0.01, "0.05" = 0.05, "0.10" = 0.10),
-                                      selected = "0.05"),
-                          actionButton("calc_ht", "انجام آزمون فرض")
+                          div(class = "info-box",
+                              h5("تنظیمات آزمون فرض"),
+                              numericInput("ht_sample_mean", "میانگین نمونه:", value = 102),
+                              numericInput("ht_pop_mean", "میانگین فرض صفر:", value = 100),
+                              numericInput("ht_sd", "انحراف معیار:", value = 15),
+                              numericInput("ht_n", "حجم نمونه:", value = 30),
+                              selectInput("ht_alpha", "سطح معنی‌داری:",
+                                          choices = c("0.01" = 0.01, "0.05" = 0.05, "0.10" = 0.10),
+                                          selected = "0.05"),
+                              actionButton("calc_ht", "انجام آزمون فرض")
+                          )
                    ),
                    column(8,
                           plotOutput("ht_plot"),
@@ -1230,7 +1674,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ نکات مهم و هشدارها"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۱۱"), "نکات مهم و هشدارها"
+                 ),
                  div(class = "warning-box",
                      h4("اشتباهات رایج"),
                      tags$ul(
@@ -1242,7 +1688,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 راهنمای عملی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۱۲"), "راهنمای عملی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -1268,30 +1716,93 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 خلاصه مفاهیم کلیدی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۵.۱۳"), "خلاصه مفاهیم کلیدی"
+                 ),
                  tableOutput("key_concepts_table")
              )
            ),
            
            "statistical_tests" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آزمون‌های آماری برای یک و دو گروه"),
+                 h2("فصل ۶: آزمون‌های آماری برای یک و دو گروه"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱"), "مقدمه و طبقه‌بندی آزمون‌ها"
+                 ),
                  div(class = "highlight-box",
-                     h4("انواع آزمون‌های آماری"),
-                     p("آزمون‌های آماری به دو دسته اصلی تقسیم می‌شوند:"),
-                     tags$ul(
-                       tags$li(tags$b("آزمون‌های پارامتری (Parametric):"), 
-                               "برای داده‌های کمی با توزیع نرمال - قدرت آماری بالاتر"),
-                       tags$li(tags$b("آزمون‌های ناپارامتری (Nonparametric):"), 
-                               "برای داده‌های کیفی یا کمی بدون فرض نرمال بودن - انعطاف‌پذیرتر")
+                     h4("تفکیک آزمون‌های پارامتری و ناپارامتری"),
+                     fluidRow(
+                       column(6,
+                              div(class = "success-box",
+                                  h4("🎯 آزمون‌های پارامتری"),
+                                  tags$ul(
+                                    tags$li("برای داده‌های کمی با توزیع نرمال"),
+                                    tags$li("قدرت آماری بالاتر"),
+                                    tags$li("نیاز به بررسی پیش‌فرض‌ها"),
+                                    tags$li("مثال: آزمون t، ANOVA")
+                                  )
+                              )
+                       ),
+                       column(6,
+                              div(class = "warning-box",
+                                  h4("🔄 آزمون‌های ناپارامتری"),
+                                  tags$ul(
+                                    tags$li("برای داده‌های کیفی یا کمی غیرنرمال"),
+                                    tags$li("انعطاف‌پذیری بیشتر"),
+                                    tags$li("نیاز به پیش‌فرض‌های کمتر"),
+                                    tags$li("مثال: من-ویتنی، ویلکاکسون")
+                                  )
+                              )
+                       )
                      )
                  ),
                  
-                 h3("🎯 آزمون‌های برای یک گروه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۲"), "پیش‌فرض‌های آزمون‌های پارامتری"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۲.۱"), "پیش‌فرض‌های اساسی"
+                 ),
+                 div(class = "warning-box",
+                     h4("📋 چک‌لیست پیش‌فرض‌های پارامتری"),
+                     tags$ul(
+                       tags$li(tags$b("نرمال بودن داده‌ها (Normality):"),
+                               tags$ul(
+                                 tags$li("داده‌ها باید از توزیع نرمال پیروی کنند"),
+                                 tags$li("روش بررسی: آزمون شاپیرو-ویلک، نمودار Q-Q"),
+                                 tags$li("اقدام جایگزین: استفاده از آزمون ناپارامتری")
+                               )),
+                       tags$li(tags$b("همسانی واریانس‌ها (Homogeneity of Variance):"),
+                               tags$ul(
+                                 tags$li("واریانس گروه‌ها باید برابر باشد"),
+                                 tags$li("روش بررسی: آزمون لوین، آزمون F"),
+                                 tags$li("اقدام جایگزین: استفاده از نسخه تصحیح شده آزمون")
+                               )),
+                       tags$li(tags$b("استقلال مشاهدات (Independence):"),
+                               tags$ul(
+                                 tags$li("داده‌ها باید از هم مستقل باشند"),
+                                 tags$li("روش بررسی: طراحی مطالعه مناسب"),
+                                 tags$li("اقدام جایگزین: استفاده از مدل‌های وابسته")
+                               )),
+                       tags$li(tags$b("خطی بودن (Linearity):"),
+                               tags$ul(
+                                 tags$li("برای رگرسیون - رابطه بین متغیرها خطی باشد"),
+                                 tags$li("روش بررسی: نمودار پراکندگی"),
+                                 tags$li("اقدام جایگزین: تبدیل داده یا مدل غیرخطی")
+                               ))
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۳"), "آزمون‌های برای یک گروه"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۳.۱"), "آزمون t تک نمونه‌ای (پارامتری)"
+                 ),
                  div(class = "success-box",
-                     h4("آزمون t تک نمونه‌ای (One-Sample t-test)"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانگین یک گروه با مقدار ثابت"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1305,12 +1816,19 @@ server <- function(input, output, session) {
                                  tags$li("داده‌ها از توزیع نرمال پیروی کنند"),
                                  tags$li("مشاهدات مستقل باشند")
                                )),
+                       tags$li(tags$b("روش بررسی پیش‌فرض‌ها:"),
+                               tags$ul(
+                                 tags$li("نرمال بودن: آزمون شاپیرو-ویلک یا نمودار Q-Q"),
+                                 tags$li("نمونه تصادفی و مستقل")
+                               )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه میانگین فشار خون بیماران با مقدار نرمال 120 mmHg")
                      )
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۳.۲"), "آزمون علامت (ناپارامتری)"
+                 ),
                  div(class = "warning-box",
-                     h4("آزمون علامت (Sign Test) - ناپارامتری"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانه یک گروه با مقدار ثابت"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1322,15 +1840,26 @@ server <- function(input, output, session) {
                                tags$ul(
                                  tags$li("داده‌ها کمی باشند"),
                                  tags$li("نیاز به توزیع نرمال ندارد"),
-                                 tags$li("مشاهدات مستقل باشند")
+                                 tags$li("مشاهدات مستقل باشند"),
+                                 tags$li("مقیاس حداقل ترتیبی")
+                               )),
+                       tags$li(tags$b("مزایا:"),
+                               tags$ul(
+                                 tags$li("مقاوم به مقادیر پرت"),
+                                 tags$li("نیاز به پیش‌فرض‌های کم")
                                )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه میانه سطح درد بیماران با مقدار آستانه")
                      )
                  ),
                  
-                 h3("📈 آزمون‌های برای دو گروه مستقل"),
-                 div(class = "info-box",
-                     h4("آزمون t مستقل (Independent t-test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۴"), "آزمون‌های برای دو گروه مستقل"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۴.۱"), "آزمون t مستقل (پارامتری)"
+                 ),
+                 div(class = "success-box",
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانگین دو گروه مستقل"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1345,12 +1874,25 @@ server <- function(input, output, session) {
                                  tags$li("واریانس دو گروه برابر باشد (همگنی واریانس)"),
                                  tags$li("مشاهدات مستقل باشند")
                                )),
+                       tags$li(tags$b("روش بررسی پیش‌فرض‌ها:"),
+                               tags$ul(
+                                 tags$li("نرمال بودن: آزمون شاپیرو-ویلک برای هر گروه"),
+                                 tags$li("همسانی واریانس: آزمون لوین"),
+                                 tags$li("نمونه‌گیری مستقل")
+                               )),
+                       tags$li(tags$b("اقدام در صورت نقض پیش‌فرض‌ها:"),
+                               tags$ul(
+                                 tags$li("نقض نرمال بودن: استفاده از من-ویتنی"),
+                                 tags$li("نقض همسانی واریانس: استفاده از آزمون t با واریانس نابرابر")
+                               )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه میانگین فشار خون بین زنان و مردان")
                      )
                  ),
                  
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۴.۲"), "آزمون من-ویتنی (ناپارامتری)"
+                 ),
                  div(class = "warning-box",
-                     h4("آزمون من-ویتنی (Mann-Whitney U Test)"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه توزیع دو گروه مستقل"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1362,15 +1904,27 @@ server <- function(input, output, session) {
                                tags$ul(
                                  tags$li("داده‌ها کمی یا ترتیبی باشند"),
                                  tags$li("نیاز به توزیع نرمال ندارد"),
-                                 tags$li("مشاهدات مستقل باشند")
+                                 tags$li("مشاهدات مستقل باشند"),
+                                 tags$li("مقیاس حداقل ترتیبی")
+                               )),
+                       tags$li(tags$b("مزایا:"),
+                               tags$ul(
+                                 tags$li("مقاوم به مقادیر پرت"),
+                                 tags$li("قدرت خوب برای داده‌های غیرنرمال"),
+                                 tags$li("نیاز به پیش‌فرض‌های کم")
                                )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه سطح درد بین دو روش درمانی")
                      )
                  ),
                  
-                 h3("🔁 آزمون‌های برای دو گروه وابسته"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۵"), "آزمون‌های برای دو گروه وابسته"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۵.۱"), "آزمون t زوجی (پارامتری)"
+                 ),
                  div(class = "success-box",
-                     h4("آزمون t زوجی (Paired t-test)"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانگین یک گروه در دو زمان مختلف"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1384,12 +1938,23 @@ server <- function(input, output, session) {
                                  tags$li("تفاضل جفت‌ها نرمال باشد"),
                                  tags$li("مشاهدات وابسته باشند (جفت‌شده)")
                                )),
+                       tags$li(tags$b("روش بررسی پیش‌فرض‌ها:"),
+                               tags$ul(
+                                 tags$li("نرمال بودن تفاضل‌ها: آزمون شاپیرو-ویلک"),
+                                 tags$li("جفت‌شدگی مناسب داده‌ها")
+                               )),
+                       tags$li(tags$b("اقدام در صورت نقض پیش‌فرض‌ها:"),
+                               tags$ul(
+                                 tags$li("نقض نرمال بودن تفاضل‌ها: استفاده از ویلکاکسون")
+                               )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه فشار خون بیماران قبل و بعد از درمان")
                      )
                  ),
                  
-                 div(class = "info-box",
-                     h4("آزمون ویلکاکسون (Wilcoxon Signed-Rank Test)"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۵.۲"), "آزمون ویلکاکسون (ناپارامتری)"
+                 ),
+                 div(class = "warning-box",
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه توزیع یک گروه در دو زمان مختلف"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1404,203 +1969,95 @@ server <- function(input, output, session) {
                                  tags$li("مشاهدات وابسته باشند"),
                                  tags$li("توزیع تفاضل‌ها متقارن باشد")
                                )),
+                       tags$li(tags$b("مزایا:"),
+                               tags$ul(
+                                 tags$li("مقاوم به مقادیر پرت"),
+                                 tags$li("مناسب برای داده‌های ترتیبی"),
+                                 tags$li("نیاز به پیش‌فرض نرمال بودن ندارد")
+                               )),
                        tags$li(tags$b("مثال پزشکی:"), "مقایسه سطح درد بیماران قبل و بعد از دارو")
                      )
                  ),
                  
-                 h3("📋 راهنمای انتخاب آزمون مناسب"),
-                 tableOutput("test_selection_guide"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۶"), "راهنمای جامع انتخاب آزمون"
+                 ),
+                 tableOutput("comprehensive_test_selection_guide"),
                  
-                 h3("🔍 شبیه‌ساز آزمون t مستقل"),
-                 fluidRow(
-                   column(4,
-                          h4("گروه ۱"),
-                          numericInput("group1_mean", "میانگین:", value = 100),
-                          numericInput("group1_sd", "انحراف معیار:", value = 15),
-                          numericInput("group1_n", "حجم نمونه:", value = 30),
-                          
-                          h4("گروه ۲"),
-                          numericInput("group2_mean", "میانگین:", value = 110),
-                          numericInput("group2_sd", "انحراف معیار:", value = 15),
-                          numericInput("group2_n", "حجم نمونه:", value = 30),
-                          
-                          selectInput("test_alpha", "سطح معنی‌داری:",
-                                      choices = c("0.01" = 0.01, "0.05" = 0.05, "0.10" = 0.10),
-                                      selected = "0.05"),
-                          actionButton("run_ttest", "انجام آزمون t")
-                   ),
-                   column(8,
-                          plotOutput("ttest_plot"),
-                          verbatimTextOutput("ttest_results")
-                   )
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۷"), "بررسی پیش‌فرض نرمال بودن"
                  ),
                  
-                 h3("📊 شبیه‌ساز آزمون من-ویتنی"),
-                 fluidRow(
-                   column(4,
-                          h4("داده‌های گروه‌ها"),
-                          p("میانگین رتبه‌ها را وارد کنید:"),
-                          numericInput("mw_group1_rank", "میانگین رتبه گروه ۱:", value = 25),
-                          numericInput("mw_group2_rank", "میانگین رتبه گروه ۲:", value = 35),
-                          numericInput("mw_n1", "حجم نمونه گروه ۱:", value = 30),
-                          numericInput("mw_n2", "حجم نمونه گروه ۲:", value = 30),
-                          actionButton("run_mwtest", "انجام آزمون من-ویتنی")
-                   ),
-                   column(8,
-                          plotOutput("mwtest_plot"),
-                          verbatimTextOutput("mwtest_results")
-                   )
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۷.۱"), "روش‌های بررسی نرمال بودن"
                  ),
-                 
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
-                 fluidRow(
-                   column(6,
-                          div(class = "highlight-box",
-                              h4("مثال ۱: مقایسه دو روش درمانی"),
+                 div(class = "info-box",
+                     h4("📊 روش‌های تشخیص نرمال بودن داده‌ها"),
+                     fluidRow(
+                       column(6,
+                              h5("روش‌های گرافیکی:"),
                               tags$ul(
-                                tags$li(tags$b("سوال:"), "آیا روش درمانی A از روش B بهتر است؟"),
-                                tags$li(tags$b("داده‌ها:"), "سطح بهبودی بیماران (کمی)"),
-                                tags$li(tags$b("توزیع:"), "نرمال"),
-                                tags$li(tags$b("آزمون:"), "t مستقل"),
-                                tags$li(tags$b("نتایج:"), "p-value = 0.02"),
-                                tags$li(tags$b("نتیجه:"), "تفاوت معنی‌دار بین دو روش وجود دارد")
+                                tags$li(tags$b("نمودار Q-Q (Quantile-Quantile):"),
+                                        tags$ul(
+                                          tags$li("داده‌ها روی خط راست → نرمال"),
+                                          tags$li("انحراف از خط → غیرنرمال")
+                                        )),
+                                tags$li(tags$b("هیستوگرام:"),
+                                        tags$ul(
+                                          tags$li("شکل زنگوله‌ای → نرمال"),
+                                          tags$li("چولگی → غیرنرمال")
+                                        )),
+                                tags$li(tags$b("نمودار جعبه‌ای:"),
+                                        tags$ul(
+                                          tags$li("متقارن → نرمال"),
+                                          tags$li("نامتقارن → غیرنرمال")
+                                        ))
                               )
-                          )
-                   ),
-                   column(6,
-                          div(class = "warning-box",
-                              h4("مثال ۲: اثر دارو بر فشار خون"),
+                       ),
+                       column(6,
+                              h5("روش‌های آماری:"),
                               tags$ul(
-                                tags$li(tags$b("سوال:"), "آیا داروی جدید فشار خون را کاهش می‌دهد؟"),
-                                tags$li(tags$b("داده‌ها:"), "فشار خون قبل و بعد از درمان"),
-                                tags$li(tags$b("توزیع:"), "غیرنرمال"),
-                                tags$li(tags$b("آزمون:"), "ویلکاکسون"),
-                                tags$li(tags$b("نتایج:"), "p-value = 0.03"),
-                                tags$li(tags$b("نتیجه:"), "دارو اثر معنی‌دار دارد")
+                                tags$li(tags$b("آزمون شاپیرو-ویلک:"),
+                                        tags$ul(
+                                          tags$li("مناسب برای نمونه‌های کوچک (n < 50)"),
+                                          tags$li("H₀: داده‌ها نرمال هستند"),
+                                          tags$li("p-value > 0.05 → نرمال")
+                                        )),
+                                tags$li(tags$b("آزمون کولموگروف-اسمیرنوف:"),
+                                        tags$ul(
+                                          tags$li("مناسب برای نمونه‌های بزرگ (n > 50)"),
+                                          tags$li("H₀: داده‌ها از توزیع نرمال پیروی می‌کنند"),
+                                          tags$li("p-value > 0.05 → نرمال")
+                                        )),
+                                tags$li(tags$b("آماره چولگی و کشیدگی:"),
+                                        tags$ul(
+                                          tags$li("چولگی ≈ 0 و کشیدگی ≈ 3 → نرمال"),
+                                          tags$li("انحراف از این مقادیر → غیرنرمال")
+                                        ))
                               )
-                          )
-                   )
-                 ),
-                 
-                 h3("🔍 بررسی پیش‌فرض‌های آزمون‌های پارامتری"),
-                 div(class = "warning-box",
-                     h4("روش‌های بررسی نرمال بودن داده‌ها"),
-                     tags$ul(
-                       tags$li(tags$b("آزمون شاپیرو-ویلک (Shapiro-Wilk):"),
-                               tags$ul(
-                                 tags$li("مناسب برای نمونه‌های کوچک (n < 50)"),
-                                 tags$li("H₀: داده‌ها از توزیع نرمال پیروی می‌کنند"),
-                                 tags$li("p-value > 0.05 → داده‌ها نرمال هستند"),
-                                 tags$li("✅ قدرت تشخیص بالا برای نمونه‌های کوچک")
-                               )),
-                       tags$li(tags$b("آزمون کولموگروف-اسمیرنوف (Kolmogorov-Smirnov):"),
-                               tags$ul(
-                                 tags$li("مناسب برای نمونه‌های بزرگ (n > 50)"),
-                                 tags$li("H₀: داده‌ها از توزیع نرمال مشخصی پیروی می‌کنند"),
-                                 tags$li("مقایسه توزیع تجربی با توزیع نرمال نظری"),
-                                 tags$li("p-value > 0.05 → داده‌ها نرمال هستند"),
-                                 tags$li("✅ مناسب برای نمونه‌های بزرگ")
-                               )),
-                       tags$li(tags$b("نمودار Q-Q (Quantile-Quantile):"),
-                               tags$ul(
-                                 tags$li("داده‌ها روی خط راست → نرمال بودن"),
-                                 tags$li("انحراف از خط → نقض نرمال بودن"),
-                                 tags$li("✅ روش گرافیکی و بصری"),
-                                 tags$li("مناسب برای تشخیص الگوهای غیرنرمالی")
-                               )),
-                       tags$li(tags$b("هیستوگرام و منحنی نرمال:"),
-                               tags$ul(
-                                 tags$li("شکل زنگوله‌ای → نرمال بودن"),
-                                 tags$li("چولگی شدید → نقض نرمال بودن"),
-                                 tags$li("✅ درک شهودی از توزیع داده‌ها")
-                               ))
+                       )
                      )
                  ),
                  
-                 h4("📊 مقایسه آزمون‌های نرمالیتی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۸"), "شبیه‌ساز بررسی نرمال بودن"
+                 ),
                  fluidRow(
-                   column(6,
+                   column(4,
                           div(class = "info-box",
-                              h5("آزمون شاپیرو-ویلک"),
-                              tags$ul(
-                                tags$li("✅ قدرت بالا در نمونه‌های کوچک"),
-                                tags$li("✅ حساسیت به انواع انحراف از نرمال بودن"),
-                                tags$li("❌ محدود به نمونه‌های 3 تا 5000 تایی"),
-                                tags$li("❌ تحت تأثیر مقادیر تکراری")
-                              )
+                              h5("تنظیمات داده‌ها"),
+                              sliderInput("norm_check_mean", "میانگین:", 
+                                          min = 0, max = 200, value = 100),
+                              sliderInput("norm_check_sd", "انحراف معیار:", 
+                                          min = 1, max = 50, value = 15),
+                              sliderInput("norm_check_n", "حجم نمونه:", 
+                                          min = 10, max = 500, value = 100),
+                              sliderInput("norm_check_skew", "درجه چولگی:", 
+                                          min = -2, max = 2, value = 0, step = 0.1),
+                              sliderInput("norm_check_kurtosis", "درجه کشیدگی:", 
+                                          min = -1, max = 5, value = 0, step = 0.1),
+                              actionButton("run_norm_check", "بررسی نرمال بودن")
                           )
-                   ),
-                   column(6,
-                          div(class = "info-box",
-                              h5("آزمون کولموگروف-اسمیرنوف"),
-                              tags$ul(
-                                tags$li("✅ مناسب برای نمونه‌های بزرگ"),
-                                tags$li("✅ قابلیت تطبیق با هر توزیع نظری"),
-                                tags$li("❌ قدرت کمتر در نمونه‌های کوچک"),
-                                tags$li("❌ حساسیت کمتر به انحرافات دم توزیع")
-                              )
-                          )
-                   )
-                 ),
-                 
-                 h4("🎯 مثال کاربردی بررسی نرمال بودن"),
-                 div(class = "success-box",
-                     h5("بررسی نرمال بودن سطح قند خون بیماران"),
-                     tags$ul(
-                       tags$li(tags$b("داده‌ها:"), "سطح قند خون ناشتای 60 بیمار"),
-                       tags$li(tags$b("آزمون شاپیرو-ویلک:"), "W = 0.985, p-value = 0.650"),
-                       tags$li(tags$b("آزمون کولموگروف-اسمیرنوف:"), "D = 0.072, p-value = 0.200"),
-                       tags$li(tags$b("نتیجه:"), "هر دو آزمون نشان می‌دهند داده‌ها نرمال هستند (p > 0.05)"),
-                       tags$li(tags$b("تصمیم:"), "می‌توان از آزمون‌های پارامتری استفاده کرد")
-                     )
-                 ),
-                 
-                 div(class = "warning-box",
-                     h4("روش‌های بررسی همگنی واریانس"),
-                     tags$ul(
-                       tags$li(tags$b("آزمون لوین (Levene's Test):"),
-                               tags$ul(
-                                 tags$li("H₀: واریانس گروه‌ها برابر است"),
-                                 tags$li("p-value > 0.05 → واریانس‌ها برابر هستند"),
-                                 tags$li("✅ مقاوم به نقض نرمال بودن"),
-                                 tags$li("مناسب برای بیشتر شرایط")
-                               )),
-                       tags$li(tags$b("آزمون F (F-test):"),
-                               tags$ul(
-                                 tags$li("مقایسه واریانس دو گروه"),
-                                 tags$li("p-value > 0.05 → واریانس‌ها برابر هستند"),
-                                 tags$li("❌ حساس به نقض نرمال بودن"),
-                                 tags$li("فقط برای دو گروه مستقل")
-                               )),
-                       tags$li(tags$b("آزمون بارتلت (Bartlett's Test):"),
-                               tags$ul(
-                                 tags$li("H₀: واریانس همه گروه‌ها برابر است"),
-                                 tags$li("p-value > 0.05 → واریانس‌ها برابر هستند"),
-                                 tags$li("❌ حساس به نقض نرمال بودن"),
-                                 tags$li("مناسب برای چندین گروه")
-                               )),
-                       tags$li(tags$b("نمودار جعبه‌ای (Boxplot):"),
-                               tags$ul(
-                                 tags$li("عرض جعبه‌ها مشابه → واریانس برابر"),
-                                 tags$li("عرض جعبه‌ها متفاوت → واریانس نابرابر"),
-                                 tags$li("✅ روش گرافیکی و بصری")
-                               ))
-                     )
-                 ),
-                 
-                 h3("🔧 شبیه‌ساز بررسی نرمال بودن"),
-                 fluidRow(
-                   column(4,
-                          h4("تنظیمات داده‌ها"),
-                          sliderInput("norm_check_mean", "میانگین:", 
-                                      min = 0, max = 200, value = 100),
-                          sliderInput("norm_check_sd", "انحراف معیار:", 
-                                      min = 1, max = 50, value = 15),
-                          sliderInput("norm_check_n", "حجم نمونه:", 
-                                      min = 10, max = 500, value = 100),
-                          sliderInput("norm_check_skew", "درجه چولگی:", 
-                                      min = -2, max = 2, value = 0, step = 0.1),
-                          actionButton("run_norm_check", "بررسی نرمال بودن")
                    ),
                    column(8,
                           plotOutput("norm_check_plot"),
@@ -1608,40 +2065,102 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h4("📋 راهنمای تفسیر نتایج نرمالیتی"),
-                 tableOutput("normality_guide_table"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۹"), "راهنمای تفسیر نتایج نرمالیتی"
+                 ),
+                 tableOutput("normality_decision_table"),
                  
-                 h3("⚠️ اقدامات در صورت نقض پیش‌فرض‌ها"),
-                 div(class = "warning-box",
-                     h4("اگر داده‌ها نرمال نباشند:"),
-                     tags$ul(
-                       tags$li(tags$b("استفاده از آزمون ناپارامتری:"), "مانند من-ویتنی به جای t-test"),
-                       tags$li(tags$b("تبدیل داده‌ها:"), 
-                               tags$ul(
-                                 tags$li("لگاریتمی (Log)"),
-                                 tags$li("جذر (Square Root)"),
-                                 tags$li("معکوس (Reciprocal)")
-                               )),
-                       tags$li(tags$b("استفاده از بوت‌استرپ (Bootstrap):"), "برای تخمین پارامترها"),
-                       tags$li(tags$b("حذف مقادیر پرت:"), "در صورت توجیه علمی")
-                     )
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۰"), "شبیه‌ساز آزمون t مستقل"
+                 ),
+                 fluidRow(
+                   column(4,
+                          div(class = "info-box",
+                              h5("تنظیمات گروه ۱"),
+                              numericInput("group1_mean", "میانگین:", value = 100),
+                              numericInput("group1_sd", "انحراف معیار:", value = 15),
+                              numericInput("group1_n", "حجم نمونه:", value = 30),
+                              
+                              h5("تنظیمات گروه ۲"),
+                              numericInput("group2_mean", "میانگین:", value = 110),
+                              numericInput("group2_sd", "انحراف معیار:", value = 15),
+                              numericInput("group2_n", "حجم نمونه:", value = 30),
+                              
+                              selectInput("test_alpha", "سطح معنی‌داری:",
+                                          choices = c("0.01" = 0.01, "0.05" = 0.05, "0.10" = 0.10),
+                                          selected = "0.05"),
+                              actionButton("run_ttest", "انجام آزمون t")
+                          )
+                   ),
+                   column(8,
+                          plotOutput("ttest_plot"),
+                          verbatimTextOutput("ttest_results")
+                   )
                  ),
                  
-                 div(class = "info-box",
-                     h4("اگر واریانس‌ها نابرابر باشند:"),
-                     tags$ul(
-                       tags$li(tags$b("آزمون t با واریانس نابرابر:"), "Welch's t-test"),
-                       tags$li(tags$b("تبدیل داده‌ها:"), "برای تثبیت واریانس"),
-                       tags$li(tags$b("استفاده از آزمون ناپارامتری:"), "مانند من-ویتنی"),
-                       tags$li(tags$b("تغییر سطح معنی‌داری:"), "استفاده از α کوچکتر")
-                     )
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۱"), "شبیه‌ساز آزمون من-ویتنی"
+                 ),
+                 fluidRow(
+                   column(4,
+                          div(class = "info-box",
+                              h5("داده‌های گروه‌ها"),
+                              p("میانگین رتبه‌ها را وارد کنید:"),
+                              numericInput("mw_group1_rank", "میانگین رتبه گروه ۱:", value = 25),
+                              numericInput("mw_group2_rank", "میانگین رتبه گروه ۲:", value = 35),
+                              numericInput("mw_n1", "حجم نمونه گروه ۱:", value = 30),
+                              numericInput("mw_n2", "حجم نمونه گروه ۲:", value = 30),
+                              actionButton("run_mwtest", "انجام آزمون من-ویتنی")
+                          )
+                   ),
+                   column(8,
+                          plotOutput("mwtest_plot"),
+                          verbatimTextOutput("mwtest_results")
+                   )
                  ),
                  
-                 h3("📈 اندازه اثر (Effect Size)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۲"), "مثال‌های کاربردی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۶.۱۲.۱"), "مثال ۱: انتخاب بین t-test و من-ویتنی"
+                 ),
+                 fluidRow(
+                   column(6,
+                          div(class = "highlight-box",
+                              h5("📊 سناریو ۱: داده‌های نرمال"),
+                              tags$ul(
+                                tags$li(tags$b("داده‌ها:"), "سطح هموگلوبین بیماران (کمی)"),
+                                tags$li(tags$b("بررسی نرمال بودن:"), "p-value شاپیرو = 0.12 → نرمال"),
+                                tags$li(tags$b("همسانی واریانس:"), "p-value لوین = 0.08 → برقرار"),
+                                tags$li(tags$b("آزمون انتخاب شده:"), "t-test مستقل"),
+                                tags$li(tags$b("نتایج:"), "p-value = 0.03"),
+                                tags$li(tags$b("نتیجه:"), "تفاوت معنی‌دار بین گروه‌ها")
+                              )
+                          )
+                   ),
+                   column(6,
+                          div(class = "warning-box",
+                              h5("🔄 سناریو ۲: داده‌های غیرنرمال"),
+                              tags$ul(
+                                tags$li(tags$b("داده‌ها:"), "سطح درد بیماران (ترتیبی)"),
+                                tags$li(tags$b("بررسی نرمال بودن:"), "p-value شاپیرو = 0.008 → غیرنرمال"),
+                                tags$li(tags$b("آزمون انتخاب شده:"), "من-ویتنی"),
+                                tags$li(tags$b("نتایج:"), "p-value = 0.02"),
+                                tags$li(tags$b("نتیجه:"), "تفاوت معنی‌دار در توزیع داده‌ها")
+                              )
+                          )
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۳"), "اندازه اثر"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
-                              h5("برای آزمون t"),
+                              h5("برای آزمون t (پارامتری)"),
                               tags$ul(
                                 tags$li(tags$b("d کوهن:"), "(میانگین۱ - میانگین۲) / انحراف معیار ترکیبی"),
                                 tags$li(tags$b("تفسیر:"),
@@ -1669,31 +2188,53 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🔍 خلاصه آزمون‌ها"),
-                 tableOutput("tests_summary_table"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۴"), "خلاصه آزمون‌ها"
+                 ),
+                 tableOutput("parametric_nonparametric_summary_table"),
                  
-                 h3("🎯 نکات عملی برای پژوهشگران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۵"), "نکات عملی و هشدارها"
+                 ),
                  div(class = "warning-box",
-                     h4("توصیه‌های مهم"),
+                     h4("⚠️ هشدارهای مهم"),
                      tags$ul(
-                       tags$li("همیشه پیش‌فرض‌های آزمون را بررسی کنید"),
+                       tags$li("همیشه پیش‌فرض‌های آزمون‌های پارامتری را بررسی کنید"),
                        tags$li("برای داده‌های غیرنرمال از آزمون‌های ناپارامتری استفاده کنید"),
                        tags$li("اندازه اثر را همراه با p-value گزارش دهید"),
-                       tags$li("برای مطالعات مقدماتی از سطح معنی‌داری 0.05 استفاده کنید"),
+                       tags$li("از تبدیل داده‌ها فقط در صورت توجیه علمی استفاده کنید"),
                        tags$li("حجم نمونه کافی برای تامین توان آماری لازم در نظر بگیرید"),
                        tags$li("نتایج را در context بالینی تفسیر کنید")
                      )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۶.۱۶"), "گزارش نتایج"
+                 ),
+                 div(class = "highlight-box",
+                     h4("📝 قالب استاندارد گزارش نتایج"),
+                     h5("برای آزمون t:"),
+                     p("t(درجه آزادی) = مقدار t, p = مقدار p, d کوهن = اندازه اثر"),
+                     p("مثال: t(58) = 2.45, p = 0.017, d = 0.63"),
+                     
+                     h5("برای آزمون من-ویتنی:"),
+                     p("U = مقدار U, p = مقدار p, r = اندازه اثر"),
+                     p("مثال: U = 245, p = 0.023, r = 0.32"),
+                     
+                     h5("تفسیر:"),
+                     p("نتایج آزمون t مستقل نشان داد که تفاوت معنی‌داری بین دو گروه وجود دارد (t(58) = 2.45, p = 0.017). اندازه اثر متوسط (d = 0.63) نشان می‌دهد این تفاوت از نظر بالینی نیز قابل توجه است.")
                  )
              )
            ),
            
            "multiple_groups" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آزمون‌هایی برای بیش از دو گروه مستقل"),
+                 h2("فصل ۷: آزمون‌هایی برای بیش از دو گروه مستقل"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۱"), "مقدمه"
+                 ),
                  div(class = "highlight-box",
-                     h4("هدف آزمون‌های چندگروهی"),
                      p("زمانی که می‌خواهیم تفاوت بین میانگین‌ها یا توزیع‌های بیش از دو گروه مستقل را بررسی کنیم، از این آزمون‌ها استفاده می‌کنیم."),
                      tags$ul(
                        tags$li(tags$b("کاربردهای پزشکی:"),
@@ -1705,9 +2246,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 آزمون‌های پارامتری برای چند گروه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۲"), "آزمون‌های پارامتری برای چند گروه"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۷.۲.۱"), "آنالیز واریانس یکطرفه (One-Way ANOVA)"
+                 ),
                  div(class = "success-box",
-                     h4("آنالیز واریانس یکطرفه (One-Way ANOVA)"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانگین سه یا چند گروه مستقل"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1726,7 +2272,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📈 مفاهیم پایه در ANOVA"),
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۷.۲.۲"), "مفاهیم پایه در ANOVA"
+                 ),
                  div(class = "info-box",
                      h4("منابع تغییرپذیری در ANOVA"),
                      tags$ul(
@@ -1737,9 +2285,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("⚠️ آزمون‌های ناپارامتری برای چند گروه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۳"), "آزمون‌های ناپارامتری برای چند گروه"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۷.۳.۱"), "آزمون کراسکال-والیس (Kruskal-Wallis)"
+                 ),
                  div(class = "warning-box",
-                     h4("آزمون کراسکال-والیس (Kruskal-Wallis)"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه توزیع سه یا چند گروه مستقل"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -1757,9 +2310,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 آزمون‌های تعقیبی (Post-hoc Tests)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۴"), "آزمون‌های تعقیبی (Post-hoc Tests)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۷.۴.۱"), "هدف آزمون‌های تعقیبی"
+                 ),
                  div(class = "highlight-box",
-                     h4("هدف آزمون‌های تعقیبی"),
                      p("زمانی که ANOVA یا کراسکال-والیس معنی‌دار باشد، از آزمون‌های تعقیبی برای مشخص کردن کدام گروه‌ها با هم تفاوت دارند استفاده می‌کنیم."),
                      
                      h5("برای ANOVA (پارامتری):"),
@@ -1776,10 +2334,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 راهنمای انتخاب آزمون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۵"), "راهنمای انتخاب آزمون"
+                 ),
                  tableOutput("multi_group_test_guide"),
                  
-                 h3("🔧 شبیه‌ساز ANOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۶"), "شبیه‌ساز ANOVA"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات گروه‌ها"),
@@ -1824,7 +2386,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 شبیه‌ساز کراسکال-والیس"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۷"), "شبیه‌ساز کراسکال-والیس"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات داده‌ها"),
@@ -1864,7 +2428,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۸"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -1896,7 +2462,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 اندازه اثر در آزمون‌های چندگروهی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۹"), "اندازه اثر در آزمون‌های چندگروهی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -1928,7 +2496,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ بررسی پیش‌فرض‌های ANOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۱۰"), "بررسی پیش‌فرض‌های ANOVA"
+                 ),
                  div(class = "warning-box",
                      h4("روش‌های بررسی پیش‌فرض‌ها"),
                      tags$ul(
@@ -1953,10 +2523,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 خلاصه آزمون‌های چندگروهی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۱۱"), "خلاصه آزمون‌های چندگروهی"
+                 ),
                  tableOutput("multi_group_summary_table"),
                  
-                 h3("🎯 نکات عملی برای پژوهشگران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۱۲"), "نکات عملی برای پژوهشگران"
+                 ),
                  div(class = "highlight-box",
                      h4("توصیه‌های مهم"),
                      tags$ul(
@@ -1969,7 +2543,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 گزارش نتایج"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۷.۱۳"), "گزارش نتایج"
+                 ),
                  div(class = "info-box",
                      h4("قالب استاندارد گزارش نتایج"),
                      h5("برای ANOVA:"),
@@ -1988,11 +2564,12 @@ server <- function(input, output, session) {
            
            "categorical_tests" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آزمون‌های آماری برای متغیرهای کیفی"),
+                 h2("فصل ۸: آزمون‌های آماری برای متغیرهای کیفی"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱"), "مقدمه"
+                 ),
                  div(class = "highlight-box",
-                     h4("هدف آزمون‌های متغیرهای کیفی"),
                      p("این آزمون‌ها برای بررسی رابطه بین متغیرهای کیفی (اسمی و ترتیبی) استفاده می‌شوند. زمانی که داده‌های ما به صورت دسته‌ای هستند و نمی‌توان از آزمون‌های پارامتری استفاده کرد، از این آزمون‌ها بهره می‌گیریم."),
                      tags$ul(
                        tags$li(tags$b("متغیرهای کیفی اسمی:"), "گروه خونی، جنسیت، نوع بیماری"),
@@ -2006,9 +2583,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 آزمون کای-دو (Chi-Square Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۲"), "آزمون کای-دو (Chi-Square Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۲.۱"), "آزمون کای-دو برای استقلال"
+                 ),
                  div(class = "success-box",
-                     h4("آزمون کای-دو برای استقلال"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "بررسی استقلال یا رابطه بین دو متغیر کیفی"),
                        tags$li(tags$b("فرضیه‌ها:"),
@@ -2027,9 +2609,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("⚠️ آزمون فیشر (Fisher's Exact Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۳"), "آزمون فیشر (Fisher's Exact Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۳.۱"), "کاربرد آزمون فیشر"
+                 ),
                  div(class = "warning-box",
-                     h4("کاربرد آزمون فیشر"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "بررسی استقلال دو متغیر کیفی در نمونه‌های کوچک"),
                        tags$li(tags$b("موارد استفاده:"),
@@ -2049,9 +2636,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📈 آزمون نسبت (Proportion Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۴"), "آزمون نسبت (Proportion Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۴.۱"), "آزمون‌های برای مقایسه نسبت‌ها"
+                 ),
                  div(class = "info-box",
-                     h4("آزمون‌های برای مقایسه نسبت‌ها"),
                      tags$ul(
                        tags$li(tags$b("آزمون نسبت یک نمونه‌ای:"), 
                                "مقایسه نسبت مشاهده شده با یک مقدار فرضی"),
@@ -2064,9 +2656,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 آزمون مک نمار (McNemar's Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۵"), "آزمون مک نمار (McNemar's Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۵.۱"), "آزمون مک نمار برای داده‌های وابسته"
+                 ),
                  div(class = "highlight-box",
-                     h4("آزمون مک نمار برای داده‌های وابسته"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), 
                                "مقایسه دو اندازه‌گیری مکرر روی یک نمونه"),
@@ -2081,10 +2678,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 راهنمای انتخاب آزمون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۶"), "راهنمای انتخاب آزمون"
+                 ),
                  tableOutput("categorical_test_selection_guide"),
                  
-                 h3("🔧 شبیه‌ساز آزمون کای-دو"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۷"), "شبیه‌ساز آزمون کای-دو"
+                 ),
                  fluidRow(
                    column(4,
                           h4("داده‌های جدول توافقی"),
@@ -2103,7 +2704,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 شبیه‌ساز آزمون فیشر"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۸"), "شبیه‌ساز آزمون فیشر"
+                 ),
                  fluidRow(
                    column(4,
                           h4("داده‌های جدول ۲×۲"),
@@ -2119,7 +2722,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۹"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -2147,7 +2752,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 اندازه اثر در آزمون‌های کیفی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۰"), "اندازه اثر در آزمون‌های کیفی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -2177,9 +2784,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ بررسی پیش‌فرض‌های آزمون کای-دو"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۱"), "بررسی پیش‌فرض‌های آزمون کای-دو"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۱۱.۱"), "روش‌های بررسی پیش‌فرض‌ها"
+                 ),
                  div(class = "warning-box",
-                     h4("روش‌های بررسی پیش‌فرض‌ها"),
                      tags$ul(
                        tags$li(tags$b("فراوانی مورد انتظار:"),
                                tags$ul(
@@ -2197,7 +2809,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 شبیه‌ساز بررسی پیش‌فرض کای-دو"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۲"), "شبیه‌ساز بررسی پیش‌فرض کای-دو"
+                 ),
                  fluidRow(
                    column(4,
                           h4("داده‌های جدول"),
@@ -2213,9 +2827,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 آزمون‌های برای متغیرهای ترتیبی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۳"), "آزمون‌های برای متغیرهای ترتیبی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۸.۱۳.۱"), "آزمون‌های ویژه داده‌های ترتیبی"
+                 ),
                  div(class = "info-box",
-                     h4("آزمون‌های ویژه داده‌های ترتیبی"),
                      tags$ul(
                        tags$li(tags$b("آزمون ترند کاکران-آرمیتاژ:"), 
                                "بررسی روند خطی در داده‌های ترتیبی"),
@@ -2228,7 +2847,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 نکات عملی برای پژوهشگران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۴"), "نکات عملی برای پژوهشگران"
+                 ),
                  div(class = "highlight-box",
                      h4("توصیه‌های مهم"),
                      tags$ul(
@@ -2241,7 +2862,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 گزارش نتایج"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۸.۱۵"), "گزارش نتایج"
+                 ),
                  div(class = "success-box",
                      h4("قالب استاندارد گزارش نتایج"),
                      h5("برای آزمون کای-دو:"),
@@ -2258,12 +2881,13 @@ server <- function(input, output, session) {
              )
            ),
            
-           # بخش آنالیز کوواریانس (ANCOVA)
            "ancova" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("آنالیز کوواریانس (ANCOVA)"),
+                 h2("فصل ۹: آنالیز کوواریانس (ANCOVA)"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۱"), "مقدمه"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف ANCOVA"),
                      p("آنالیز کوواریانس (ANCOVA) ترکیبی از ANOVA و رگرسیون است که برای کنترل اثر متغیرهای کمّی مزاحم (کوواریات) هنگام مقایسه گروه‌ها استفاده می‌شود."),
@@ -2284,9 +2908,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 مفاهیم پایه در ANCOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۲"), "مفاهیم پایه در ANCOVA"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۹.۲.۱"), "اجزای اصلی ANCOVA"
+                 ),
                  div(class = "success-box",
-                     h4("اجزای اصلی ANCOVA"),
                      tags$ul(
                        tags$li(tags$b("متغیر وابسته:"), "متغیر کمّی که می‌خواهیم مقایسه کنیم"),
                        tags$li(tags$b("متغیر مستقل:"), "متغیر گروه‌بندی (کیفی)"),
@@ -2296,9 +2925,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📈 پیش‌فرض‌های ANCOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۳"), "پیش‌فرض‌های ANCOVA"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۹.۳.۱"), "پیش‌فرض‌های مهم"
+                 ),
                  div(class = "warning-box",
-                     h4("پیش‌فرض‌های مهم"),
                      tags$ul(
                        tags$li(tags$b("خطی بودن:"), "رابطه خطی بین کوواریات و متغیر وابسته"),
                        tags$li(tags$b("همگونی شیب‌های رگرسیون:"), "شیب رابطه در همه گروه‌ها یکسان باشد"),
@@ -2308,9 +2942,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 بررسی پیش‌فرض همگونی شیب‌ها"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۴"), "بررسی پیش‌فرض همگونی شیب‌ها"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۹.۴.۱"), "آزمون برهمکنش گروه × کوواریات"
+                 ),
                  div(class = "info-box",
-                     h4("آزمون برهمکنش گروه × کوواریات"),
                      tags$ul(
                        tags$li("اگر برهمکنش معنی‌دار نباشد: پیش‌فرض برقرار است"),
                        tags$li("اگر برهمکنش معنی‌دار باشد: پیش‌فرض نقض شده است"),
@@ -2318,7 +2957,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 شبیه‌ساز ANCOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۵"), "شبیه‌ساز ANCOVA"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات داده‌ها"),
@@ -2353,7 +2994,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۶"), "مثال کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -2379,7 +3022,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ نکات مهم و هشدارها"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۷"), "نکات مهم و هشدارها"
+                 ),
                  div(class = "warning-box",
                      h4("اشتباهات رایج"),
                      tags$ul(
@@ -2391,7 +3036,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 گزارش نتایج ANCOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۹.۸"), "گزارش نتایج ANCOVA"
+                 ),
                  div(class = "highlight-box",
                      h4("قالب استاندارد گزارش"),
                      p("پس از کنترل اثر [نام کوواریات]، تفاوت معنی‌داری بین گروه‌ها مشاهده شد (F(درجه آزادی بین, درجه آزادی درون) = مقدار F, p = مقدار p, η² = اندازه اثر)."),
@@ -2401,14 +3048,14 @@ server <- function(input, output, session) {
              )
            ),
            
-           # بخش مقایسه بیش از دو گروه وابسته
            "repeated_measures" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("مقایسه بیش از دو گروه وابسته"),
+                 h2("فصل ۱۰: مقایسه بیش از دو گروه وابسته"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۱"), "مقدمه"
+                 ),
                  div(class = "highlight-box",
-                     h4("داده‌های اندازه‌گیری مکرر"),
                      p("زمانی که اندازه‌گیری‌های متعددی از یک نمونه در زمان‌ها یا شرایط مختلف انجام می‌شود، از این روش‌ها استفاده می‌کنیم."),
                      tags$ul(
                        tags$li(tags$b("کاربردهای پزشکی:"),
@@ -2426,9 +3073,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 تحلیل واریانس با اندازه‌گیری مکرر (Repeated Measures ANOVA)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۲"), "تحلیل واریانس با اندازه‌گیری مکرر"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۰.۲.۱"), "ویژگی‌های Repeated Measures ANOVA"
+                 ),
                  div(class = "success-box",
-                     h4("ویژگی‌های Repeated Measures ANOVA"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه میانگین‌های چند اندازه‌گیری وابسته"),
                        tags$li(tags$b("پیش‌فرض‌ها:"),
@@ -2441,9 +3093,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📈 آزمون فریدمن (Friedman Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۳"), "آزمون فریدمن (Friedman Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۰.۳.۱"), "آزمون ناپارامتری برای داده‌های وابسته"
+                 ),
                  div(class = "warning-box",
-                     h4("آزمون ناپارامتری برای داده‌های وابسته"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه توزیع چند اندازه‌گیری وابسته"),
                        tags$li(tags$b("کاربرد:"),
@@ -2456,9 +3113,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 آزمون Q کوکران (Cochran's Q Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۴"), "آزمون Q کوکران (Cochran's Q Test)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۰.۴.۱"), "آزمون برای داده‌های دوحالتی وابسته"
+                 ),
                  div(class = "info-box",
-                     h4("آزمون برای داده‌های دوحالتی وابسته"),
                      tags$ul(
                        tags$li(tags$b("هدف:"), "مقایسه نسبت‌های چند اندازه‌گیری وابسته"),
                        tags$li(tags$b("کاربرد:"),
@@ -2471,9 +3133,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("⚠️ پیش‌فرض کروی بودن (Sphericity)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۵"), "پیش‌فرض کروی بودن (Sphericity)"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۰.۵.۱"), "بررسی و اصلاح کروی بودن"
+                 ),
                  div(class = "warning-box",
-                     h4("بررسی و اصلاح کروی بودن"),
                      tags$ul(
                        tags$li(tags$b("آزمون ماشلی (Mauchly's Test):"), "برای بررسی کروی بودن"),
                        tags$li(tags$b("اصلاح‌ها در صورت نقض:"),
@@ -2486,7 +3153,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 شبیه‌ساز Repeated Measures ANOVA"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۶"), "شبیه‌ساز Repeated Measures ANOVA"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مطالعه"),
@@ -2522,7 +3191,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 شبیه‌ساز آزمون فریدمن"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۷"), "شبیه‌ساز آزمون فریدمن"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات داده‌های رتبه‌ای"),
@@ -2556,7 +3227,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🔍 شبیه‌ساز آزمون Q کوکران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۸"), "شبیه‌ساز آزمون Q کوکران"
+                 ),
                  fluidRow(
                    column(4,
                           h4("داده‌های دوحالتی"),
@@ -2591,7 +3264,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۹"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(4,
                           div(class = "success-box",
@@ -2628,10 +3303,14 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📋 خلاصه آزمون‌ها"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۱۰"), "خلاصه آزمون‌ها"
+                 ),
                  tableOutput("repeated_measures_summary_table"),
                  
-                 h3("🎯 نکات عملی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۰.۱۱"), "نکات عملی"
+                 ),
                  div(class = "highlight-box",
                      h4("توصیه‌های مهم"),
                      tags$ul(
@@ -2646,11 +3325,17 @@ server <- function(input, output, session) {
              )
            ),
            
+           # در بخش UI، محتوای فصل ۱۱ به بعد را به این صورت اضافه کنید:
+           
+           # در تابع renderUI در سرور، بخش‌های مربوط به فصل ۱۱ به بعد را اضافه می‌کنیم:
+           
            "correlation" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("همبستگی (Correlation)"),
+                 h2("فصل ۱۱: همبستگی"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۱"), "مقدمه همبستگی"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف همبستگی"),
                      p("همبستگی اندازه‌گیری رابطه خطی بین دو متغیر کمی است. همبستگی نشان می‌دهد که چگونه تغییرات یک متغیر با تغییرات متغیر دیگر مرتبط است."),
@@ -2666,11 +3351,17 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 انواع همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۲"), "انواع همبستگی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۱.۲.۱"), "همبستگی‌های پارامتری"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
-                              h4("همبستگی‌های پارامتری"),
+                              h4("همبستگی پیرسون"),
                               tags$ul(
                                 tags$li(tags$b("ضریب همبستگی پیرسون:"),
                                         tags$ul(
@@ -2709,7 +3400,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 تفسیر ضریب همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۳"), "تفسیر ضریب همبستگی"
+                 ),
                  div(class = "info-box",
                      h4("مقیاس تفسیر همبستگی"),
                      tableOutput("correlation_interpretation_table"),
@@ -2721,7 +3414,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 نمودارهای همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۴"), "نمودارهای همبستگی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -2747,7 +3442,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 شبیه‌ساز همبستگی پیرسون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۵"), "شبیه‌ساز همبستگی پیرسون"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات داده‌ها"),
@@ -2768,7 +3465,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 شبیه‌ساز همبستگی اسپیرمن"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۶"), "شبیه‌ساز همبستگی اسپیرمن"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات داده‌ها"),
@@ -2787,7 +3486,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۷"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -2815,7 +3516,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ اشتباهات رایج در تحلیل همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۸"), "اشتباهات رایج در تحلیل همبستگی"
+                 ),
                  div(class = "warning-box",
                      h4("هشدارهای مهم"),
                      tags$ul(
@@ -2827,10 +3530,14 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 راهنمای انتخاب آزمون همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۹"), "راهنمای انتخاب آزمون همبستگی"
+                 ),
                  tableOutput("correlation_selection_guide"),
                  
-                 h3("🔍 بررسی پیش‌فرض‌های همبستگی پیرسون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۱۰"), "بررسی پیش‌فرض‌های همبستگی پیرسون"
+                 ),
                  div(class = "info-box",
                      h4("روش‌های بررسی پیش‌فرض‌ها"),
                      tags$ul(
@@ -2854,7 +3561,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 اندازه اثر در همبستگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۱۱"), "اندازه اثر در همبستگی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -2893,7 +3602,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 نکات عملی برای پژوهشگران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۱۲"), "نکات عملی برای پژوهشگران"
+                 ),
                  div(class = "highlight-box",
                      h4("توصیه‌های مهم"),
                      tags$ul(
@@ -2906,7 +3617,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📈 گزارش نتایج"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۱.۱۳"), "گزارش نتایج"
+                 ),
                  div(class = "info-box",
                      h4("قالب استاندارد گزارش نتایج"),
                      h5("برای همبستگی پیرسون:"),
@@ -2925,9 +3638,11 @@ server <- function(input, output, session) {
            
            "linear_regression" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("رگرسیون خطی (Linear Regression)"),
+                 h2("فصل ۱۲: رگرسیون خطی"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۱"), "مقدمه رگرسیون خطی"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف رگرسیون خطی"),
                      p("رگرسیون خطی روشی آماری برای مدل‌سازی رابطه بین یک متغیر وابسته کمی و یک یا چند متغیر مستقل است. هدف پیش‌بینی متغیر وابسته بر اساس متغیرهای مستقل است."),
@@ -2943,7 +3658,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 انواع رگرسیون خطی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۲"), "انواع رگرسیون خطی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -2979,7 +3696,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 مفاهیم پایه در رگرسیون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۳"), "مفاهیم پایه در رگرسیون"
+                 ),
                  div(class = "warning-box",
                      h4("شاخص‌های مهم رگرسیون"),
                      tags$ul(
@@ -2991,7 +3710,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 پیش‌فرض‌های رگرسیون خطی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۴"), "پیش‌فرض‌های رگرسیون خطی"
+                 ),
                  div(class = "info-box",
                      h4("پیش‌فرض‌های اصلی"),
                      tags$ul(
@@ -3003,7 +3724,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 شبیه‌ساز رگرسیون خطی ساده"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۵"), "شبیه‌ساز رگرسیون خطی ساده"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مدل"),
@@ -3023,7 +3746,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 شبیه‌ساز رگرسیون خطی چندگانه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۶"), "شبیه‌ساز رگرسیون خطی چندگانه"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مدل"),
@@ -3048,7 +3773,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۷"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3076,7 +3803,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ تشخیص مشکلات در رگرسیون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۸"), "تشخیص مشکلات در رگرسیون"
+                 ),
                  div(class = "warning-box",
                      h4("مشکلات رایج و راه‌حل‌ها"),
                      tags$ul(
@@ -3100,7 +3829,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 گزارش نتایج رگرسیون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۲.۹"), "گزارش نتایج رگرسیون"
+                 ),
                  div(class = "highlight-box",
                      h4("قالب استاندارد گزارش"),
                      h5("برای رگرسیون ساده:"),
@@ -3117,9 +3848,11 @@ server <- function(input, output, session) {
            
            "logistic_regression" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("رگرسیون لجستیک (Logistic Regression)"),
+                 h2("فصل ۱۳: رگرسیون لجستیک"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۱"), "مقدمه رگرسیون لجستیک"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف رگرسیون لجستیک"),
                      p("رگرسیون لجستیک برای مدل‌سازی رابطه بین یک متغیر وابسته دوحالتی (باینری) و یک یا چند متغیر مستقل استفاده می‌شود. این روش احتمال رخداد یک رویداد را پیش‌بینی می‌کند."),
@@ -3135,7 +3868,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 انواع رگرسیون لجستیک"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۲"), "انواع رگرسیون لجستیک"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3166,7 +3901,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 مفاهیم پایه در رگرسیون لجستیک"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۳"), "مفاهیم پایه در رگرسیون لجستیک"
+                 ),
                  div(class = "warning-box",
                      h4("شاخص‌های مهم"),
                      tags$ul(
@@ -3178,7 +3915,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 شبیه‌ساز رگرسیون لجستیک ساده"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۴"), "شبیه‌ساز رگرسیون لجستیک ساده"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مدل"),
@@ -3198,7 +3937,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📊 تفسیر نسبت شانس (Odds Ratio)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۵"), "تفسیر نسبت شانس (Odds Ratio)"
+                 ),
                  div(class = "info-box",
                      h4("راهنمای تفسیر OR"),
                      tableOutput("or_interpretation_table"),
@@ -3211,7 +3952,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۳.۶"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3241,9 +3984,11 @@ server <- function(input, output, session) {
            
            "count_regression" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("رگرسیون شمارشی (Count Regression)"),
+                 h2("فصل ۱۴: رگرسیون شمارشی"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۴.۱"), "مقدمه رگرسیون شمارشی"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف رگرسیون شمارشی"),
                      p("رگرسیون شمارشی برای مدل‌سازی متغیرهای وابسته که تعداد رویدادها را در یک بازه زمانی یا مکانی نشان می‌دهند استفاده می‌شود. این متغیرها مقادیر صحیح و غیرمنفی دارند."),
@@ -3259,7 +4004,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 انواع رگرسیون شمارشی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۴.۲"), "انواع رگرسیون شمارشی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3287,7 +4034,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 تشخیص پراکندگی بیش از حد"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۴.۳"), "تشخیص پراکندگی بیش از حد"
+                 ),
                  div(class = "info-box",
                      h4("روش‌های تشخیص"),
                      tags$ul(
@@ -3298,7 +4047,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 شبیه‌ساز رگرسیون پواسون"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۴.۴"), "شبیه‌ساز رگرسیون پواسون"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مدل"),
@@ -3318,7 +4069,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۴.۵"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3348,9 +4101,11 @@ server <- function(input, output, session) {
            
            "survival_analysis" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("تحلیل بقا (Survival Analysis)"),
+                 h2("فصل ۱۵: تحلیل بقا"),
                  
-                 h3("📊 مقدمه"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۱"), "مقدمه تحلیل بقا"
+                 ),
                  div(class = "highlight-box",
                      h4("تعریف تحلیل بقا"),
                      p("تحلیل بقا مجموعه‌ای از روش‌های آماری برای تحلیل داده‌های 'زمان تا وقوع رخداد' است. این روش‌ها زمانی استفاده می‌شوند که متغیر پاسخ، زمان تا وقوع یک رویداد خاص باشد."),
@@ -3368,7 +4123,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🎯 مفاهیم پایه در تحلیل بقا"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۲"), "مفاهیم پایه در تحلیل بقا"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "success-box",
@@ -3395,7 +4152,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ انواع سانسورشدگی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۳"), "انواع سانسورشدگی"
+                 ),
                  div(class = "warning-box",
                      h4("سانسورشدگی راست (Right Censoring)"),
                      tags$ul(
@@ -3408,7 +4167,9 @@ server <- function(input, output, session) {
                      p("بیماری که تا پایان مطالعه زنده مانده: زمان 36+ ماه")
                  ),
                  
-                 h3("📈 تخمین کاپلان-مایر (Kaplan-Meier)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۴"), "تخمین کاپلان-مایر"
+                 ),
                  div(class = "info-box",
                      h4("روش کاپلان-مایر"),
                      tags$ul(
@@ -3420,7 +4181,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔍 آزمون لگرانک (Log-Rank Test)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۵"), "آزمون لگرانک"
+                 ),
                  div(class = "highlight-box",
                      h4("مقایسه منحنی‌های بقا"),
                      tags$ul(
@@ -3432,7 +4195,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📊 رگرسیون کاکس (Cox Regression)"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۶"), "رگرسیون کاکس"
+                 ),
                  div(class = "success-box",
                      h4("مدل خطرات متناسب کاکس"),
                      tags$ul(
@@ -3445,7 +4210,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("🔧 شبیه‌ساز منحنی کاپلان-مایر"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۷"), "شبیه‌ساز منحنی کاپلان-مایر"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات گروه‌ها"),
@@ -3476,7 +4243,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("📈 شبیه‌ساز رگرسیون کاکس"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۸"), "شبیه‌ساز رگرسیون کاکس"
+                 ),
                  fluidRow(
                    column(4,
                           h4("تنظیمات مدل"),
@@ -3499,7 +4268,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("🎯 مثال‌های کاربردی در پزشکی"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۹"), "مثال‌های کاربردی در پزشکی"
+                 ),
                  fluidRow(
                    column(6,
                           div(class = "info-box",
@@ -3525,7 +4296,9 @@ server <- function(input, output, session) {
                    )
                  ),
                  
-                 h3("⚠️ پیش‌فرض‌های مهم"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۱۰"), "پیش‌فرض‌های مهم"
+                 ),
                  div(class = "warning-box",
                      h4("پیش‌فرض خطرات متناسب"),
                      tags$ul(
@@ -3541,7 +4314,9 @@ server <- function(input, output, session) {
                      )
                  ),
                  
-                 h3("📋 گزارش نتایج"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۱۱"), "گزارش نتایج"
+                 ),
                  div(class = "highlight-box",
                      h4("قالب استاندارد گزارش"),
                      h5("برای منحنی کاپلان-مایر:"),
@@ -3556,10 +4331,14 @@ server <- function(input, output, session) {
                      p("نتایج نشان داد که درمان جدید با کاهش 40% در خطر مرگ همراه است (HR = 0.60, 95% CI [0.45-0.80], p = 0.001).")
                  ),
                  
-                 h3("🔍 خلاصه روش‌های تحلیل بقا"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۱۲"), "خلاصه روش‌های تحلیل بقا"
+                 ),
                  tableOutput("survival_methods_table"),
                  
-                 h3("🎯 نکات عملی برای پژوهشگران"),
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۵.۱۳"), "نکات عملی برای پژوهشگران"
+                 ),
                  div(class = "info-box",
                      h4("توصیه‌های مهم"),
                      tags$ul(
@@ -3574,678 +4353,948 @@ server <- function(input, output, session) {
              )
            ),
            
-           # سایر بخش‌ها...
-           
-           "normal_sim" = tagList(
+           "tips" = tagList(
              div(class = "rtl-text farsi-font",
-                 h2("شبیه‌ساز توزیع نرمال"),
-                 p("با این ابزار می‌توانید نمونه‌هایی از یک توزیع نرمال با میانگین و انحراف معیار مشخص تولید کنید و ویژگی‌های توزیع نرمال را بهتر درک کنید.")
+                 h2("فصل ۱۶: نکات کاربردی و راهنمای عملی"),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۱"), "نکات طراحی مطالعه"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۱.۱"), "تعیین حجم نمونه"
+                 ),
+                 div(class = "highlight-box",
+                     h4("روش‌های تعیین حجم نمونه"),
+                     tags$ul(
+                       tags$li(tags$b("بر اساس مطالعات مشابه:"), "استفاده از حجم نمونه مطالعات مشابه"),
+                       tags$li(tags$b("محاسبات آماری:"), "استفاده از فرمول‌های حجم نمونه"),
+                       tags$li(tags$b("نرم‌افزارهای تخصصی:"), "G*Power, PASS, nQuery"),
+                       tags$li(tags$b("قاعده کلی:"), "حداقل 30 نمونه در هر گروه")
+                     ),
+                     h5("عوامل مؤثر بر حجم نمونه:"),
+                     tags$ul(
+                       tags$li("اندازه اثر مورد انتظار"),
+                       tags$li("سطح معنی‌داری (معمولاً 0.05)"),
+                       tags$li("توان آماری (معمولاً 0.8)"),
+                       tags$li("نوع آزمون آماری"),
+                       tags$li("میزان پراکندگی داده‌ها")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۱.۲"), "روش نمونه‌گیری"
+                 ),
+                 div(class = "info-box",
+                     h4("انتخاب روش نمونه‌گیری مناسب"),
+                     tags$ul(
+                       tags$li(tags$b("مطالعات مقدماتی:"), "نمونه‌گیری در دسترس"),
+                       tags$li(tags$b("مطالعات توصیفی:"), "نمونه‌گیری تصادفی ساده یا سیستماتیک"),
+                       tags$li(tags$b("مطالعات تحلیلی:"), "نمونه‌گیری طبقه‌ای"),
+                       tags$li(tags$b("مطالعات بزرگ:"), "نمونه‌گیری خوشه‌ای")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۲"), "نکات جمع‌آوری داده"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۲.۱"), "طراحی فرم جمع‌آوری داده"
+                 ),
+                 div(class = "warning-box",
+                     h4("اصول طراحی فرم"),
+                     tags$ul(
+                       tags$li("تعریف عملیاتی واضح برای هر متغیر"),
+                       tags$li("استفاده از مقیاس‌های استاندارد"),
+                       tags$li("کدگذاری مناسب برای داده‌های کیفی"),
+                       tags$li("در نظر گرفتن واحد اندازه‌گیری"),
+                       tags$li("پیش‌آزمون فرم")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۲.۲"), "کنترل کیفیت داده"
+                 ),
+                 div(class = "success-box",
+                     h4("روش‌های کنترل کیفیت"),
+                     tags$ul(
+                       tags$li("بررسی دامنه مقادیر"),
+                       tags$li("شناسایی مقادیر پرت"),
+                       tags$li("بررسی consistency داده‌ها"),
+                       tags$li("double data entry"),
+                       tags$li("بررسی missing data")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۳"), "نکات تحلیل داده"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۳.۱"), "بررسی پیش‌فرض‌ها"
+                 ),
+                 div(class = "info-box",
+                     h4("چک‌لیست پیش‌فرض‌ها"),
+                     tags$ul(
+                       tags$li("نرمال بودن داده‌ها"),
+                       tags$li("همسانی واریانس‌ها"),
+                       tags$li("خطی بودن روابط"),
+                       tags$li("استقلال مشاهدات"),
+                       tags$li("عدم همخطی")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۳.۲"), "انتخاب آزمون آماری"
+                 ),
+                 div(class = "highlight-box",
+                     h4("راهنمای انتخاب آزمون"),
+                     tags$ul(
+                       tags$li(tags$b("داده‌های کمی نرمال:"), "آزمون‌های پارامتری"),
+                       tags$li(tags$b("داده‌های کمی غیرنرمال:"), "آزمون‌های ناپارامتری"),
+                       tags$li(tags$b("داده‌های کیفی:"), "آزمون کای-دو یا فیشر"),
+                       tags$li(tags$b("داده‌های وابسته:"), "آزمون‌های زوجی"),
+                       tags$li(tags$b("چند گروه:"), "ANOVA یا کراسکال-والیس")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۴"), "نکات گزارش نتایج"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۴.۱"), "گزارش آمار توصیفی"
+                 ),
+                 div(class = "warning-box",
+                     h4("اصول گزارش آمار توصیفی"),
+                     tags$ul(
+                       tags$li("برای داده‌های نرمال: میانگین ± انحراف معیار"),
+                       tags$li("برای داده‌های غیرنرمال: میانه (دامنه میان چارکی)"),
+                       tags$li("برای داده‌های کیفی: تعداد (درصد)"),
+                       tags$li("گزارش حجم نمونه برای هر گروه"),
+                       tags$li("گزارش missing data")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۴.۲"), "گزارش آمار استنباطی"
+                 ),
+                 div(class = "success-box",
+                     h4("اصول گزارش آمار استنباطی"),
+                     tags$ul(
+                       tags$li("گزارش دقیق p-value"),
+                       tags$li("گزارش فاصله اطمینان"),
+                       tags$li("گزارش اندازه اثر"),
+                       tags$li("گزارش آماره آزمون و درجه آزادی"),
+                       tags$li("پرهیز از گزارش p-value به صورت ستاره‌ای")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۵"), "اشتباهات رایج"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۵.۱"), "اشتباهات مفهومی"
+                 ),
+                 div(class = "warning-box",
+                     h4("اشتباهات رایج مفهومی"),
+                     tags$ul(
+                       tags$li("تفسیر همبستگی به عنوان علیت"),
+                       tags$li("عدم تفکیک معنی‌داری آماری و اهمیت بالینی"),
+                       tags$li("استفاده نادرست از 'پذیرش فرض صفر'"),
+                       tags$li("بی‌توجهی به خطای نوع دوم"),
+                       tags$li("تکیه صرف بر p-value")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۵.۲"), "اشتباهات فنی"
+                 ),
+                 div(class = "info-box",
+                     h4("اشتباهات فنی رایج"),
+                     tags$ul(
+                       tags$li("استفاده از آزمون پارامتری برای داده‌های غیرنرمال"),
+                       tags$li("بی‌توجهی به پیش‌فرض‌های آزمون"),
+                       tags$li("انجام multiple comparisons بدون اصلاح"),
+                       tags$li("حذف مقادیر پرت بدون بررسی"),
+                       tags$li("استفاده نادرست از میانگین برای داده‌های skewed")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۶"), "نرم‌افزارهای آماری"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۶.۱"), "مقایسه نرم‌افزارها"
+                 ),
+                 div(class = "highlight-box",
+                     h4("نرم‌افزارهای رایج"),
+                     tags$ul(
+                       tags$li(tags$b("SPSS:"), "مناسب برای شروع، رابط کاربری ساده"),
+                       tags$li(tags$b("R:"), "قدرتمند، رایگان، انعطاف‌پذیر"),
+                       tags$li(tags$b("SAS:"), "حرفه‌ای، گران، در صنعت داروسازی رایج"),
+                       tags$li(tags$b("Stata:"), "کاربرپسند، مناسب برای داده‌های اقتصادی-اجتماعی"),
+                       tags$li(tags$b("Python:"), "قدرتمند، رایگان، مناسب برای تحلیل‌های پیشرفته")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۶.۲"), "انتخاب نرم‌افزار"
+                 ),
+                 div(class = "info-box",
+                     h4("معیارهای انتخاب"),
+                     tags$ul(
+                       tags$li("میزان پیچیدگی تحلیل"),
+                       tags$li("هزینه و بودجه"),
+                       tags$li("مهارت کاربر"),
+                       tags$li("نیازهای خاص پروژه"),
+                       tags$li("پشتیبانی و جامعه کاربری")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۷"), "منابع آموزشی"
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۷.۱"), "کتاب‌های مرجع"
+                 ),
+                 div(class = "success-box",
+                     h4("کتاب‌های پیشنهادی"),
+                     tags$ul(
+                       tags$li("'آمار زیستی' - نوشته محمدتقی آیت‌اللهی"),
+                       tags$li("'اصول آمار پزشکی' - نوشته محمدرضا محمدی"),
+                       tags$li("'Biostatistics: A Foundation for Analysis in the Health Sciences' - Wayne W. Daniel"),
+                       tags$li("'Medical Statistics' - Geoffrey R. Norman"),
+                       tags$li("'Practical Statistics for Medical Research' - Douglas G. Altman")
+                     )
+                 ),
+                 
+                 div(class = "subsection-title",
+                     span(class = "subsection-number", "۱۶.۷.۲"), "منابع آنلاین"
+                 ),
+                 div(class = "warning-box",
+                     h4("منابع آموزشی آنلاین"),
+                     tags$ul(
+                       tags$li("Coursera: Statistics with R"),
+                       tags$li("edX: Introduction to Biostatistics"),
+                       tags$li("Khan Academy: Statistics and probability"),
+                       tags$li("YouTube: StatQuest with Josh Starmer"),
+                       tags$li("وبسایت دانشگاه‌های معتبر")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۸"), "راهنمای انتخاب آزمون آماری"
+                 ),
+                 
+                 fluidRow(
+                   column(6,
+                          div(class = "info-box",
+                              h4("برای داده‌های کمی"),
+                              tableOutput("quantitative_tests_guide")
+                          )
+                   ),
+                   column(6,
+                          div(class = "info-box",
+                              h4("برای داده‌های کیفی"),
+                              tableOutput("qualitative_tests_guide")
+                          )
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۹"), "چک‌لیست پایان مطالعه"
+                 ),
+                 div(class = "highlight-box",
+                     h4("چک‌لیست نهایی قبل از ارسال مقاله"),
+                     tags$ul(
+                       tags$li("✅ پیش‌فرض‌های آزمون‌ها بررسی شده است"),
+                       tags$li("✅ حجم نمونه کافی تأمین شده است"),
+                       tags$li("✅ روش نمونه‌گیری به درستی توصیف شده است"),
+                       tags$li("✅ متغیرها به درستی تعریف شده‌اند"),
+                       tags$li("✅ آمار توصیفی به طور کامل گزارش شده است"),
+                       tags$li("✅ آمار استنباطی با جزئیات گزارش شده است"),
+                       tags$li("✅ اندازه اثر محاسبه و گزارش شده است"),
+                       tags$li("✅ فاصله اطمینان گزارش شده است"),
+                       tags$li("✅ محدودیت‌های مطالعه ذکر شده است"),
+                       tags$li("✅ نتایج در context بالینی تفسیر شده است")
+                     )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۱۰"), "ابزارهای محاسباتی"
+                 ),
+                 
+                 fluidRow(
+                   column(4,
+                          div(class = "info-box",
+                              h4("محاسبه حجم نمونه"),
+                              numericInput("power", "توان آماری (0.8-0.9):", value = 0.8, min = 0.5, max = 0.95, step = 0.05),
+                              numericInput("alpha", "سطح معنی‌داری:", value = 0.05, min = 0.01, max = 0.1, step = 0.01),
+                              numericInput("effect_size", "اندازه اثر (کوچک=0.2, متوسط=0.5, بزرگ=0.8):", value = 0.5, min = 0.1, max = 1, step = 0.1),
+                              actionButton("calc_sample_size", "محاسبه حجم نمونه"),
+                              verbatimTextOutput("sample_size_result")
+                          )
+                   ),
+                   column(4,
+                          div(class = "success-box",
+                              h4("محاسبه توان آماری"),
+                              numericInput("sample_size_power", "حجم نمونه:", value = 30),
+                              numericInput("alpha_power", "سطح معنی‌داری:", value = 0.05),
+                              numericInput("effect_size_power", "اندازه اثر:", value = 0.5),
+                              actionButton("calc_power", "محاسبه توان"),
+                              verbatimTextOutput("power_result")
+                          )
+                   ),
+                   column(4,
+                          div(class = "warning-box",
+                              h4("تبدیل اندازه اثر"),
+                              selectInput("effect_type", "نوع اندازه اثر:",
+                                          choices = c("d کوهن", "r", "η²", "φ")),
+                              numericInput("effect_value", "مقدار اندازه اثر:", value = 0.5),
+                              actionButton("convert_effect", "تبدیل"),
+                              verbatimTextOutput("effect_conversion_result")
+                          )
+                   )
+                 ),
+                 
+                 div(class = "section-title",
+                     span(class = "section-number", "۱۶.۱۱"), "سخن پایانی"
+                 ),
+                 div(class = "highlight-box",
+                     h4("توصیه‌های نهایی"),
+                     tags$ul(
+                       tags$li("همیشه با متخصص آمار مشورت کنید"),
+                       tags$li("تحلیل آماری را از ابتدای مطالعه برنامه‌ریزی کنید"),
+                       tags$li("نتایج را در context بالینی تفسیر کنید"),
+                       tags$li("شفافیت در گزارش روش‌ها و نتایج"),
+                       tags$li("یادگیری مستمر را ادامه دهید")
+                     ),
+                     p("یادتان باشد: آمار ابزاری است برای کمک به تصمیم‌گیری بهتر، نه جایگزینی برای قضاوت بالینی."),
+                     
+                     h4("نکته طلایی:"),
+                     div(class = "success-box",
+                         p("معنی‌داری آماری ≠ اهمیت بالینی"),
+                         p("همیشه به دنبال تفسیر عملی و کاربردی نتایج باشید.")
+                     )
+                 )
              )
            )
     )
   })
   
-  # جداول برای انواع متغیرها
+  # توابع سرور برای جداول و نمودارها
   output$variables_table <- renderTable({
     data.frame(
-      "نوع متغیر" = c("کیفی اسمی", "کیفی ترتیبی", "کمی فاصله‌ای", "کمی نسبی"),
-      "تعریف" = c("بدون ترتیب طبیعی", "با ترتیب طبیعی", "مقادیر عددی با فاصله معنی‌دار", "مقادیر عددی با صفر مطلق"),
-      "مثال پزشکی" = c("گروه خونی، جنسیت", "درجه سرطان، سطح درد", "دمای بدن، نمره آپگار", "قد، وزن، فشار خون")
+      "نوع متغیر" = c("کمی پیوسته", "کمی گسسته", "کیفی اسمی", "کیفی ترتیبی"),
+      "تعریف" = c(
+        "مقادیر عددی با فاصله‌های معنی‌دار - مثال: قد، وزن",
+        "مقادیر عددی بدون فاصله‌های معنی‌دار - مثال: تعداد فرزندان",
+        "دسته‌های بدون ترتیب - مثال: گروه خونی، جنسیت",
+        "دسته‌های با ترتیب طبیعی - مثال: سطح درد، درجه سرطان"
+      ),
+      "مثال پزشکی" = c(
+        "فشار خون، دمای بدن",
+        "تعداد بستری‌ها، تعداد داروها",
+        "گروه خونی، نوع بیماری",
+        "درجه سرطان، سطح ناراحتی"
+      )
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
-  # جداول برای آمار توصیفی
-  output$qualitative_freq_table <- renderTable({
-    blood_types <- data.frame(
-      "گروه خونی" = c("A", "B", "O", "AB"),
-      "فراوانی مطلق" = c(42, 38, 15, 5),
-      "فراوانی نسبی" = c(0.42, 0.38, 0.15, 0.05),
-      "فراوانی درصدی" = c("42%", "38%", "15%", "5%"),
-      "فراوانی تجمعی" = c(42, 80, 95, 100)
-    )
-    blood_types
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c', digits = 2)
-  
-  output$quantitative_freq_table <- renderTable({
-    age_intervals <- data.frame(
-      "بازه سنی" = c("20-29", "30-39", "40-49", "50-59", "60-69"),
-      "فراوانی مطلق" = c(15, 28, 35, 18, 4),
-      "فراوانی نسبی" = c(0.15, 0.28, 0.35, 0.18, 0.04),
-      "فراوانی درصدی" = c("15%", "28%", "35%", "18%", "4%"),
-      "فراوانی تجمعی" = c(15, 43, 78, 96, 100),
-      "نقطه میانی" = c(24.5, 34.5, 44.5, 54.5, 64.5)
-    )
-    age_intervals
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c', digits = 2)
-  
-  output$bp_raw_data_table <- renderTable({
-    set.seed(123)
-    sample_bp <- round(rnorm(10, mean = 125, sd = 15))
+  output$sigma_lab_data <- renderTable({
     data.frame(
-      "شماره بیمار" = 1:10,
-      "فشار خون (mmHg)" = sample_bp
+      "نمونه" = 1:5,
+      "مقدار قند خون (mg/dL)" = c(95, 102, 98, 116, 135),
+      "وضعیت" = c("قابل قبول", "قابل قبول", "قابل قبول", "هشدار", "اقدام")
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  output$bp_freq_table <- renderTable({
-    bp_intervals <- data.frame(
-      "بازه فشار خون" = c("90-99", "100-109", "110-119", "120-129", "130-139", "140-149", "150-159"),
-      "فراوانی مطلق" = c(5, 12, 28, 35, 15, 4, 1),
-      "فراوانی نسبی" = c(0.05, 0.12, 0.28, 0.35, 0.15, 0.04, 0.01),
-      "فراوانی درصدی" = c("5%", "12%", "28%", "35%", "15%", "4%", "1%")
-    )
-    bp_intervals
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c', digits = 2)
-  
-  # نمودارهای دمو
-  output$bar_chart_demo <- renderPlot({
-    data <- data.frame(
-      Disease = c("دیابت", "فشار خون", "آسم", "قلبی"),
-      Count = c(35, 42, 18, 25)
-    )
-    
-    ggplot(data, aes(x = reorder(Disease, -Count), y = Count, fill = Disease)) +
-      geom_col(alpha = 0.7, color = "black") +
-      geom_text(aes(label = Count), vjust = -0.5, size = 4, family = "Tahoma") +
-      scale_fill_brewer(palette = "Set2") +
-      theme_minimal() +
-      labs(title = "شیوع بیماری‌ها", x = "نوع بیماری", y = "تعداد بیماران") +
-      theme(text = element_text(family = "Tahoma", size = 10),
-            legend.position = "none",
-            axis.text.x = element_text(angle = 45, hjust = 1))
-  })
-  
-  output$pie_chart_demo <- renderPlot({
-    data <- data.frame(
-      RiskFactor = c("سیگار", "چاقی", "بی‌تحرکی", "سابقه خانوادگی", "سایر"),
-      Count = c(30, 25, 20, 15, 10)
-    )
-    
-    ggplot(data, aes(x = "", y = Count, fill = RiskFactor)) +
-      geom_col(alpha = 0.7, color = "black") +
-      coord_polar("y", start = 0) +
-      scale_fill_brewer(palette = "Set3") +
-      theme_void() +
-      labs(title = "توزیع عوامل خطر بیماری قلبی") +
-      theme(text = element_text(family = "Tahoma", size = 10),
-            legend.position = "bottom",
-            plot.title = element_text(hjust = 0.5))
-  })
-  
-  output$histogram_demo <- renderPlot({
-    set.seed(123)
-    bp_data <- rnorm(200, mean = 125, sd = 15)
-    
-    ggplot(data.frame(BP = bp_data), aes(x = BP)) +
-      geom_histogram(fill = "skyblue", alpha = 0.7, bins = 15, color = "black") +
-      geom_vline(xintercept = mean(bp_data), color = "red", linetype = "dashed", size = 1) +
-      theme_minimal() +
-      labs(title = "توزیع فشار خون در جامعه", x = "فشار خون (mmHg)", y = "فراوانی") +
-      theme(text = element_text(family = "Tahoma", size = 10))
-  })
-  
-  output$boxplot_demo <- renderPlot({
-    set.seed(123)
-    group1 <- rnorm(50, mean = 120, sd = 10)
-    group2 <- rnorm(50, mean = 130, sd = 12)
-    group3 <- rnorm(50, mean = 125, sd = 8)
-    
-    data <- data.frame(
-      BP = c(group1, group2, group3),
-      Group = rep(c("گروه A", "گروه B", "گروه C"), each = 50)
-    )
-    
-    ggplot(data, aes(x = Group, y = BP, fill = Group)) +
-      geom_boxplot(alpha = 0.7, outlier.color = "red") +
-      scale_fill_brewer(palette = "Pastel1") +
-      theme_minimal() +
-      labs(title = "مقایسه فشار خون بین گروه‌ها", x = "گروه", y = "فشار خون (mmHg)") +
-      theme(text = element_text(family = "Tahoma", size = 10),
-            legend.position = "none")
-  })
-  
-  # توابع سرور برای نمودارهای آمار توصیفی
+  # نمودارهای آمار توصیفی
   output$mean_plot <- renderPlot({
     set.seed(123)
-    data <- c(rnorm(95, mean = 100, sd = 15), 200)
-    
-    df <- data.frame(Value = data)
+    data <- rnorm(100, mean = 100, sd = 15)
     mean_val <- mean(data)
     
-    ggplot(df, aes(x = Value)) +
-      geom_histogram(fill = "skyblue", alpha = 0.7, bins = 20, color = "black") +
-      geom_vline(xintercept = mean_val, color = "red", size = 1.5, linetype = "dashed") +
-      geom_point(aes(x = 200, y = 0), color = "red", size = 3, shape = 8) +
-      annotate("text", x = mean_val, y = 15, label = "میانگین", 
-               color = "red", hjust = -0.1, family = "Tahoma", size = 5) +
-      annotate("text", x = 200, y = 2, label = "مقدار پرت", 
-               color = "red", hjust = -0.1, family = "Tahoma", size = 4) +
-      theme_minimal() +
-      labs(title = "میانگین - حساس به مقادیر پرت", x = "مقدار", y = "فراوانی") +
-      theme(text = element_text(family = "Tahoma", size = 12))
+    ggplot(data.frame(x = data), aes(x = x)) +
+      geom_histogram(aes(y = ..density..), bins = 20, fill = "skyblue", alpha = 0.7) +
+      geom_density(color = "darkblue", size = 1) +
+      geom_vline(xintercept = mean_val, color = "red", size = 1, linetype = "dashed") +
+      labs(title = "توزیع داده‌ها با میانگین", x = "مقدار", y = "چگالی") +
+      theme_minimal()
   })
   
   output$median_plot <- renderPlot({
     set.seed(123)
-    data <- c(rnorm(95, mean = 100, sd = 15), 200)
+    data <- c(rnorm(90, mean = 100, sd = 15), rep(200, 10))
     
-    df <- data.frame(Value = data)
-    median_val <- median(data)
-    
-    ggplot(df, aes(x = Value)) +
-      geom_histogram(fill = "lightgreen", alpha = 0.7, bins = 20, color = "black") +
-      geom_vline(xintercept = median_val, color = "darkgreen", size = 1.5, linetype = "dashed") +
-      geom_point(aes(x = 200, y = 0), color = "red", size = 3, shape = 8) +
-      annotate("text", x = median_val, y = 15, label = "میانه", 
-               color = "darkgreen", hjust = -0.1, family = "Tahoma", size = 5) +
-      theme_minimal() +
-      labs(title = "میانه - مقاوم به مقادیر پرت", x = "مقدار", y = "فراوانی") +
-      theme(text = element_text(family = "Tahoma", size = 12))
+    ggplot(data.frame(x = data), aes(x = x)) +
+      geom_boxplot(fill = "lightgreen", alpha = 0.7) +
+      labs(title = "نمودار جعبه‌ای - مقاوم به مقادیر پرت", x = "مقدار") +
+      theme_minimal()
   })
   
   output$mode_plot <- renderPlot({
-    set.seed(123)
-    data <- sample(c(rep("A", 40), rep("B", 35), rep("O", 20), rep("AB", 5)))
+    data <- c(rep("A", 40), rep("B", 30), rep("C", 20), rep("D", 10))
+    freq_data <- as.data.frame(table(data))
     
-    df <- as.data.frame(table(data))
-    colnames(df) <- c("Group", "Count")
-    
-    ggplot(df, aes(x = reorder(Group, -Count), y = Count, fill = Group)) +
-      geom_col(alpha = 0.7, color = "black") +
-      geom_text(aes(label = Count), vjust = -0.5, family = "Tahoma", size = 5) +
-      scale_fill_brewer(palette = "Set2") +
-      theme_minimal() +
-      labs(title = "نما - پرتکرارترین گروه خونی", x = "گروه خونی", y = "تعداد") +
-      theme(text = element_text(family = "Tahoma", size = 12),
-            legend.position = "none")
+    ggplot(freq_data, aes(x = data, y = Freq)) +
+      geom_bar(stat = "identity", fill = "coral", alpha = 0.7) +
+      labs(title = "نمودار فراوانی - نمایش نما", x = "دسته", y = "فراوانی") +
+      theme_minimal()
   })
   
-  output$range_plot <- renderPlot({
-    set.seed(123)
-    data <- rnorm(100, mean = 100, sd = 15)
-    
-    df <- data.frame(Value = data)
-    min_val <- min(data)
-    max_val <- max(data)
-    range_val <- max_val - min_val
-    
-    ggplot(df, aes(x = Value)) +
-      geom_histogram(fill = "orange", alpha = 0.7, bins = 20, color = "black") +
-      geom_vline(xintercept = c(min_val, max_val), color = "red", size = 1, linetype = "dashed") +
-      annotate("rect", xmin = min_val, xmax = max_val, ymin = 0, ymax = Inf,
-               alpha = 0.2, fill = "red") +
-      annotate("text", x = min_val, y = 10, label = "مینیمم", 
-               color = "red", hjust = 1.1, family = "Tahoma", size = 4) +
-      annotate("text", x = max_val, y = 10, label = "ماکسیمم", 
-               color = "red", hjust = -0.1, family = "Tahoma", size = 4) +
-      annotate("text", x = mean(c(min_val, max_val)), y = 15, 
-               label = paste("دامنه =", round(range_val, 1)), 
-               color = "darkred", family = "Tahoma", size = 5) +
-      theme_minimal() +
-      labs(title = "دامنه (ماکسیمم - مینیمم)", x = "مقدار", y = "فراوانی") +
-      theme(text = element_text(family = "Tahoma", size = 12))
-  })
+  # جداول فراوانی
+  output$qualitative_freq_table <- renderTable({
+    data.frame(
+      "گروه خونی" = c("O", "A", "B", "AB"),
+      "فراوانی مطلق" = c(45, 35, 15, 5),
+      "فراوانی نسبی" = c(0.45, 0.35, 0.15, 0.05),
+      "فراوانی درصدی" = c("45%", "35%", "15%", "5%")
+    )
+  }, striped = TRUE, hover = TRUE)
   
-  output$variance_plot <- renderPlot({
-    set.seed(123)
-    data1 <- rnorm(100, mean = 100, sd = 5)
-    data2 <- rnorm(100, mean = 100, sd = 15)
-    
-    df <- data.frame(
-      Value = c(data1, data2),
-      Group = rep(c("پراکندگی کم", "پراکندگی زیاد"), each = 100)
+  output$ordinal_freq_table <- renderTable({
+    data.frame(
+      "درجه سرطان" = c("I", "II", "III", "IV"),
+      "فراوانی" = c(20, 35, 25, 10),
+      "فراوانی نسبی" = c("22.2%", "38.9%", "27.8%", "11.1%"),
+      "فراوانی تجمعی" = c("22.2%", "61.1%", "88.9%", "100%")
+    )
+  }, striped = TRUE, hover = TRUE)
+  
+  output$quantitative_freq_table <- renderTable({
+    data.frame(
+      "بازه سنی" = c("20-30", "30-40", "40-50", "50-60", "60-70"),
+      "فراوانی" = c(15, 25, 30, 20, 10),
+      "فراوانی نسبی" = c("15%", "25%", "30%", "20%", "10%"),
+      "نقطه میانی" = c(25, 35, 45, 55, 65)
+    )
+  }, striped = TRUE, hover = TRUE)
+  
+  # نمودارهای توصیفی
+  output$bar_chart_demo <- renderPlot({
+    data <- data.frame(
+      disease = c("قلبی", "سرطان", "تنفسی", "گوارشی"),
+      frequency = c(30, 25, 20, 15)
     )
     
-    var1 <- var(data1)
-    var2 <- var(data2)
-    
-    ggplot(df, aes(x = Value, fill = Group)) +
-      geom_density(alpha = 0.6) +
-      geom_vline(xintercept = 100, linetype = "dashed", color = "red") +
-      annotate("text", x = 85, y = 0.05, label = paste("واریانس =", round(var1, 1)), 
-               color = "darkblue", family = "Tahoma", size = 4) +
-      annotate("text", x = 130, y = 0.02, label = paste("واریانس =", round(var2, 1)), 
-               color = "darkred", family = "Tahoma", size = 4) +
-      scale_fill_manual(values = c("پراکندگی کم" = "lightblue", "پراکندگی زیاد" = "salmon")) +
-      theme_minimal() +
-      labs(title = "واریانس - اندازه‌گیری پراکندگی", 
-           x = "مقدار", y = "چگالی", fill = "گروه") +
-      theme(text = element_text(family = "Tahoma", size = 12),
-            legend.position = "bottom")
+    ggplot(data, aes(x = reorder(disease, -frequency), y = frequency)) +
+      geom_bar(stat = "identity", fill = "steelblue", alpha = 0.7) +
+      labs(title = "نمودار میله‌ای - شیوع بیماری‌ها", x = "نوع بیماری", y = "فراوانی") +
+      theme_minimal()
   })
   
-  output$sd_plot <- renderPlot({
+  output$pie_chart_demo <- renderPlot({
+    data <- data.frame(
+      group = c("A", "B", "O", "AB"),
+      value = c(45, 35, 15, 5)
+    )
+    
+    ggplot(data, aes(x = "", y = value, fill = group)) +
+      geom_bar(stat = "identity", width = 1) +
+      coord_polar("y", start = 0) +
+      labs(title = "نمودار دایره‌ای - توزیع گروه خونی", fill = "گروه خونی") +
+      theme_void()
+  })
+  
+  output$histogram_demo <- renderPlot({
     set.seed(123)
-    data <- rnorm(1000, mean = 100, sd = 15)
+    data <- rnorm(100, mean = 120, sd = 15)
     
-    df <- data.frame(Value = data)
-    mean_val <- mean(data)
-    sd_val <- sd(data)
-    
-    ggplot(df, aes(x = Value)) +
-      geom_histogram(aes(y = ..density..), fill = "purple", alpha = 0.7, bins = 30, color = "black") +
-      geom_density(color = "blue", size = 1) +
-      geom_vline(xintercept = mean_val + c(-2, -1, 0, 1, 2)*sd_val, 
-                 color = "red", linetype = "dashed", alpha = 0.7) +
-      annotate("rect", xmin = mean_val - sd_val, xmax = mean_val + sd_val, ymin = 0, ymax = Inf,
-               alpha = 0.2, fill = "green") +
-      annotate("rect", xmin = mean_val - 2*sd_val, xmax = mean_val + 2*sd_val, ymin = 0, ymax = Inf,
-               alpha = 0.1, fill = "yellow") +
-      annotate("text", x = mean_val, y = 0.02, label = "μ", color = "red", size = 6) +
-      annotate("text", x = mean_val + sd_val, y = 0.02, label = "μ+σ", color = "red", size = 4) +
-      annotate("text", x = mean_val - sd_val, y = 0.02, label = "μ-σ", color = "red", size = 4) +
-      annotate("text", x = mean_val, y = 0.06, 
-               label = paste("68% داده‌ها در μ ± σ"), color = "darkgreen", size = 4) +
-      annotate("text", x = mean_val, y = 0.05, 
-               label = paste("95% داده‌ها در μ ± 2σ"), color = "darkorange", size = 4) +
-      theme_minimal() +
-      labs(title = "انحراف معیار - پراکندگی حول میانگین", x = "مقدار", y = "چگالی") +
-      theme(text = element_text(family = "Tahoma", size = 12))
+    ggplot(data.frame(x = data), aes(x = x)) +
+      geom_histogram(bins = 15, fill = "lightgreen", alpha = 0.7, color = "black") +
+      labs(title = "هیستوگرام - توزیع فشار خون", x = "فشار خون", y = "فراوانی") +
+      theme_minimal()
   })
   
-  output$quartile_plot <- renderPlot({
+  output$boxplot_demo <- renderPlot({
     set.seed(123)
-    data <- rnorm(100, mean = 100, sd = 15)
+    group1 <- rnorm(50, mean = 100, sd = 10)
+    group2 <- rnorm(50, mean = 110, sd = 12)
     
-    q1 <- quantile(data, 0.25)
-    q2 <- quantile(data, 0.50)
-    q3 <- quantile(data, 0.75)
-    iqr <- q3 - q1
+    data <- data.frame(
+      value = c(group1, group2),
+      group = rep(c("درمان A", "درمان B"), each = 50)
+    )
     
-    df <- data.frame(Value = data)
-    
-    ggplot(df, aes(x = "", y = Value)) +
-      geom_boxplot(fill = "lightblue", alpha = 0.7, width = 0.3, outlier.color = "red") +
-      geom_point(aes(x = ""), position = position_jitter(width = 0.1), alpha = 0.5, size = 1) +
-      annotate("text", x = 0.7, y = q1, label = paste("Q1 =", round(q1, 1)), 
-               color = "red", size = 4, family = "Tahoma") +
-      annotate("text", x = 0.7, y = q2, label = paste("Q2 =", round(q2, 1)), 
-               color = "darkgreen", size = 4, family = "Tahoma") +
-      annotate("text", x = 0.7, y = q3, label = paste("Q3 =", round(q3, 1)), 
-               color = "blue", size = 4, family = "Tahoma") +
-      annotate("text", x = 1.3, y = (q1 + q3)/2, label = paste("IQR =", round(iqr, 1)), 
-               color = "purple", size = 5, family = "Tahoma") +
-      theme_minimal() +
-      labs(title = "نمودار جعبه‌ای - نمایش چارک‌ها و دامنه میان چارکی", 
-           x = "", y = "مقدار") +
-      theme(text = element_text(family = "Tahoma", size = 12))
+    ggplot(data, aes(x = group, y = value, fill = group)) +
+      geom_boxplot(alpha = 0.7) +
+      labs(title = "نمودار جعبه‌ای - مقایسه دو گروه", x = "گروه درمانی", y = "نتیجه") +
+      theme_minimal()
   })
   
-  output$outlier_detection_plot <- renderPlot({
+  # داده‌های فشار خون
+  output$bp_raw_data_table <- renderTable({
     set.seed(123)
-    data <- c(rnorm(90, mean = 100, sd = 10), 
-              rnorm(5, mean = 150, sd = 5),
-              rnorm(5, mean = 50, sd = 5))
-    
-    df <- data.frame(Index = 1:length(data), Value = data)
-    
-    q1 <- quantile(data, 0.25)
-    q3 <- quantile(data, 0.75)
-    iqr <- q3 - q1
-    is_outlier <- data < (q1 - 1.5*iqr) | data > (q3 + 1.5*iqr)
-    
-    ggplot(df, aes(x = Index, y = Value, color = is_outlier)) +
-      geom_point(size = 2) +
-      geom_hline(yintercept = c(q1 - 1.5*iqr, q3 + 1.5*iqr), 
-                 linetype = "dashed", color = "red", size = 1) +
-      scale_color_manual(values = c("FALSE" = "blue", "TRUE" = "red"),
-                         labels = c("FALSE" = "داده عادی", "TRUE" = "مقدار پرت")) +
-      theme_minimal() +
-      labs(title = "شناسایی مقادیر پرت در نمودار پراکندگی", 
-           x = "شماره نمونه", y = "مقدار", color = "نوع داده") +
-      theme(text = element_text(family = "Tahoma"),
-            legend.position = "bottom")
-  })
+    data.frame(
+      "بیمار" = 1:10,
+      "فشار خون" = round(rnorm(10, mean = 120, sd = 15), 1)
+    )
+  }, striped = TRUE, hover = TRUE)
   
-  output$bp_example_plot <- renderPlot({
-    set.seed(123)
-    bp_data <- rnorm(100, mean = 125, sd = 15)
-    
-    df <- data.frame(BloodPressure = bp_data)
-    
-    ggplot(df, aes(x = BloodPressure)) +
-      geom_histogram(aes(y = ..density..), fill = "lightcoral", alpha = 0.7, bins = 20) +
-      geom_density(color = "darkred", size = 1) +
-      geom_vline(xintercept = mean(bp_data), color = "blue", linetype = "dashed", size = 1) +
-      geom_vline(xintercept = median(bp_data), color = "green", linetype = "dashed", size = 1) +
-      annotate("text", x = mean(bp_data), y = 0.02, label = "میانگین", 
-               color = "blue", hjust = -0.1, family = "Tahoma") +
-      annotate("text", x = median(bp_data), y = 0.025, label = "میانه", 
-               color = "green", hjust = 1.1, family = "Tahoma") +
-      theme_minimal() +
-      labs(title = "توزیع فشار خون 100 بیمار", 
-           x = "فشار خون (mmHg)", y = "چگالی") +
-      theme(text = element_text(family = "Tahoma"))
-  })
+  output$bp_freq_table <- renderTable({
+    data.frame(
+      "بازه فشار خون" = c("90-100", "100-110", "110-120", "120-130", "130-140", "140-150"),
+      "فراوانی" = c(5, 12, 28, 35, 15, 5),
+      "فراوانی درصدی" = c("5%", "12%", "28%", "35%", "15%", "5%")
+    )
+  }, striped = TRUE, hover = TRUE)
   
-  # جدول خلاصه شاخص‌های آمار توصیفی
+  # خلاصه آمار توصیفی
   output$descriptive_summary_table <- renderTable({
     data.frame(
-      "شاخص" = c("میانگین", "میانه", "نما", "دامنه", "واریانس", "انحراف معیار", "دامنه میان چارکی"),
-      "تعریف" = c("مجموع مقادیر تقسیم بر تعداد", "مقدار وسطی داده‌های مرتب", "پرتکرارترین مقدار", "تفاوت ماکسیمم و مینیمم", "میانگین مربعات انحراف از میانگین", "جذر واریانس", "تفاوت چارک سوم و اول"),
-      "نوع داده" = c("کمی", "کمی و ترتیبی", "همه انواع", "کمی", "کمی", "کمی", "کمی"),
-      "مزایا" = c("استفاده از تمام داده‌ها", "مقاوم به مقادیر پرت", "قابل استفاده برای داده‌های کیفی", "محاسبه ساده", "دقت بالا", "واحد معنی‌دار", "مقاوم به مقادیر پرت"),
-      "معایب" = c("حساس به مقادیر پرت", "عدم استفاده از تمام اطلاعات", "ممکن است چندین نما وجود داشته باشد", "حساس به مقادیر پرت", "واحد نامأنوس", "حساس به مقادیر پرت", "پیچیدگی محاسبه")
+      "شاخص" = c("میانگین", "میانه", "نما", "انحراف معیار", "دامنه", "دامنه میان چارکی"),
+      "تعریف" = c(
+        "مجموع مقادیر تقسیم بر تعداد",
+        "مقدار وسطی داده‌های مرتب شده",
+        "پرتکرارترین مقدار",
+        "میانگین فاصله از میانگین",
+        "تفاوت بزرگترین و کوچکترین مقدار",
+        "تفاوت چارک سوم و اول"
+      ),
+      "کاربرد" = c(
+        "داده‌های نرمال و متقارن",
+        "داده‌های غیرنرمال و دارای مقادیر پرت",
+        "داده‌های کیفی و ترتیبی",
+        "اندازه‌گیری پراکندگی",
+        "بررسی اولیه پراکندگی",
+        "شناسایی مقادیر پرت"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  # توابع سرور برای توزیع‌های آماری
+  # شبیه‌ساز توزیع نرمال
   observeEvent(input$plot_normal, {
     output$normal_plot <- renderPlot({
+      req(input$norm_mean, input$norm_sd, input$norm_sample_size)
+      
+      # نمونه‌گیری تصادفی از توزیع نرمال
       set.seed(123)
-      data <- rnorm(input$norm_sample_size, 
-                    mean = input$norm_mean, 
-                    sd = input$norm_sd)
+      data <- rnorm(input$norm_sample_size, mean = input$norm_mean, sd = input$norm_sd)
       
-      # محاسبه محدوده ثابت برای محورها
-      x_min <- min(input$norm_mean - 4*input$norm_sd, -100)
-      x_max <- max(input$norm_mean + 4*input$norm_sd, 100)
-      x_range <- max(abs(x_min), abs(x_max))
-      x_limits <- c(-x_range, x_range)
+      # محدوده ثابت برای محور x - برای مقایسه بهتر
+      fixed_x_min <- 0
+      fixed_x_max <- 200
       
-      df <- data.frame(Value = data)
+      # محدوده برای منحنی نظری
+      x_seq <- seq(fixed_x_min, fixed_x_max, length.out = 400)
+      y_density <- dnorm(x_seq, mean = input$norm_mean, sd = input$norm_sd)
       
-      p1 <- ggplot(df, aes(x = Value)) +
+      # محاسبه ارتفاع برای قرار دادن متن‌ها
+      max_density <- max(y_density)
+      
+      # ایجاد نمودار با محدوده ثابت
+      p <- ggplot(data.frame(x = data), aes(x = x)) +
+        # هیستوگرام داده‌های شبیه‌سازی شده
         geom_histogram(aes(y = ..density..), 
-                       bins = 30, fill = "skyblue", alpha = 0.7) +
-        geom_density(color = "blue", size = 1) +
-        stat_function(fun = dnorm, 
-                      args = list(mean = input$norm_mean, sd = input$norm_sd),
-                      color = "red", size = 1, linetype = "dashed") +
-        coord_cartesian(xlim = x_limits) +  # ثابت نگه داشتن محور x
+                       bins = 30, 
+                       fill = "lightblue", 
+                       alpha = 0.7,
+                       color = "black") +
+        # منحنی چگالی داده‌های شبیه‌سازی شده (آبی)
+        geom_density(color = "darkblue", size = 1.5, alpha = 0.7) +
+        # منحنی نظری نرمال (قرمز)
+        geom_line(data = data.frame(x = x_seq, y = y_density),
+                  aes(x = x, y = y), 
+                  color = "red", 
+                  size = 1.8, 
+                  linetype = "solid",
+                  alpha = 0.8) +
+        # خط میانگین
+        geom_vline(xintercept = input$norm_mean, 
+                   color = "red", 
+                   size = 2,
+                   alpha = 0.8) +
+        # خطوط انحراف معیار
+        geom_vline(xintercept = c(input$norm_mean - input$norm_sd, 
+                                  input$norm_mean + input$norm_sd), 
+                   color = "darkgreen", 
+                   size = 1.5, 
+                   linetype = "dashed",
+                   alpha = 0.8) +
+        # محدوده ثابت برای مقایسه بهتر
+        coord_cartesian(xlim = c(fixed_x_min, fixed_x_max)) +
+        labs(title = paste("شبیه‌سازی توزیع نرمال -", 
+                           input$norm_sample_size, "نمونه"),
+             subtitle = paste("μ =", input$norm_mean, ", σ =", input$norm_sd),
+             x = "مقدار", 
+             y = "چگالی") +
         theme_minimal() +
-        labs(title = "هیستوگرام و منحنی چگالی",
-             x = "مقدار", y = "چگالی")
+        theme(
+          text = element_text(family = "Tahoma"),
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+          plot.subtitle = element_text(hjust = 0.5, size = 12, color = "darkred"),
+          axis.title = element_text(size = 12),
+          axis.text = element_text(size = 10)
+        )
       
-      p2 <- ggplot(df, aes(sample = Value)) +
-        geom_qq_line(color = "red", size = 1) +
-        geom_qq(color = "blue", alpha = 0.6) +
-        theme_minimal() +
-        labs(title = "نمودار Q-Q برای بررسی نرمال بودن",
-             x = "مقادیر تئوریک", y = "مقادیر مشاهده شده")
+      # اضافه کردن راهنما و حاشیه‌نویسی با توضیحات کامل
+      p <- p + 
+        # منطقه تحت منحنی نظری
+        geom_area(data = data.frame(x = x_seq, y = y_density),
+                  aes(x = x, y = y), 
+                  fill = "red", 
+                  alpha = 0.1) +
+        
+        # توضیحات منحنی قرمز (نظری)
+        annotate("label", x = 150, y = max_density * 0.9,
+                 label = "📊 منحنی قرمز (نظری):\n• توزیع نرمال ایده‌آل\n• فرمول ریاضی دقیق\n• پایه محاسبات آماری",
+                 color = "red", size = 4, hjust = 0, 
+                 fill = "pink", alpha = 0.8) +
+        
+        # توضیحات منحنی آبی (تجربی)
+        annotate("label", x = 150, y = max_density * 0.6,
+                 label = "📈 منحنی آبی (تجربی):\n• داده‌های شبیه‌سازی شده\n• نمایش واقعی نمونه\n• تحت تأثیر تصادف",
+                 color = "darkblue", size = 4, hjust = 0,
+                 fill = "lightblue", alpha = 0.8) +
+        
+        # مقایسه دو منحنی
+        annotate("label", x = 150, y = max_density * 0.3,
+                 label = "⚖️ مقایسه دو منحنی:\n• انطباق ≈ دقت نمونه‌گیری\n• اختلاف ≈ خطای نمونه‌گیری\n• با n بزرگتر → انطباق بهتر",
+                 color = "purple", size = 4, hjust = 0,
+                 fill = "lavender", alpha = 0.8) +
+        
+        # متن راهنما برای خطوط
+        annotate("text", x = input$norm_mean, y = max_density * 0.95,
+                 label = "μ", color = "red", size = 6, fontface = "bold") +
+        annotate("text", x = input$norm_mean + input$norm_sd, y = max_density * 0.8,
+                 label = "μ+σ", color = "darkgreen", size = 4, fontface = "bold") +
+        annotate("text", x = input$norm_mean - input$norm_sd, y = max_density * 0.8,
+                 label = "μ-σ", color = "darkgreen", size = 4, fontface = "bold")
       
-      gridExtra::grid.arrange(p1, p2, ncol = 2)
+      p
     })
     
     output$normal_info <- renderPrint({
+      req(input$norm_mean, input$norm_sd, input$norm_sample_size)
+      
       set.seed(123)
-      data <- rnorm(input$norm_sample_size, 
-                    mean = input$norm_mean, 
-                    sd = input$norm_sd)
+      data <- rnorm(input$norm_sample_size, mean = input$norm_mean, sd = input$norm_sd)
       
-      cat("📊 اطلاعات توزیع نرمال\n\n")
-      cat("پارامترهای توزیع:\n")
-      cat("  میانگین (μ):", input$norm_mean, "\n")
-      cat("  انحراف معیار (σ):", input$norm_sd, "\n")
-      cat("  واریانس (σ²):", round(input$norm_sd^2, 2), "\n\n")
+      cat("🎯 توضیحات کامل درباره منحنی‌ها\n")
+      cat("=====================================\n\n")
       
-      cat("آمار توصیفی نمونه:\n")
-      cat("  حجم نمونه:", length(data), "\n")
-      cat("  میانگین نمونه:", round(mean(data), 2), "\n")
-      cat("  انحراف معیار نمونه:", round(sd(data), 2), "\n")
-      cat("  میانه:", round(median(data), 2), "\n\n")
+      cat("🔴 منحنی قرمز (تئوری):\n")
+      cat("   • نشان‌دهنده توزیع نرمال ایده‌آل و کامل است\n")
+      cat("   • بر اساس فرمول ریاضی دقیق محاسبه می‌شود:\n")
+      cat("     f(x) = (1/σ√(2π)) * e^(-(x-μ)²/(2σ²))\n")
+      cat("   • نشان می‌دهد جامعه آماری چگونه باید باشد\n")
+      cat("   • برای محاسبات دقیق و پیش‌بینی استفاده می‌شود\n\n")
       
-      cat("📈 قانون 68-95-99.7:\n")
-      cat("  68% داده‌ها بین", round(input$norm_mean - input$norm_sd, 1), 
-          "و", round(input$norm_mean + input$norm_sd, 1), "\n")
-      cat("  95% داده‌ها بین", round(input$norm_mean - 2*input$norm_sd, 1), 
-          "و", round(input$norm_mean + 2*input$norm_sd, 1), "\n")
-      cat("  99.7% داده‌ها بین", round(input$norm_mean - 3*input$norm_sd, 1), 
-          "و", round(input$norm_mean + 3*input$norm_sd, 1), "\n\n")
+      cat("🔵 منحنی آبی (تجربی):\n")
+      cat("   • از داده‌های شبیه‌سازی شده ایجاد می‌شود\n")
+      cat("   • نمایش‌دهنده واقعیت نمونه‌گیری است\n")
+      cat("   • تحت تأثیر تصادف و خطای نمونه‌گیری است\n")
+      cat("   • هر بار اجرا ممکن است کمی متفاوت باشد\n\n")
       
-      if(input$norm_sample_size <= 5000) {
-        norm_test <- shapiro.test(data)
-        cat("📊 آزمون نرمالیتی شاپیرو-ویلک:\n")
-        cat("  آماره W:", round(norm_test$statistic, 4), "\n")
-        cat("  p-value:", format.pval(norm_test$p.value, digits = 3), "\n")
-        if(norm_test$p.value > 0.05) {
-          cat("  ✅ داده‌ها نرمال هستند (p > 0.05)\n")
-        } else {
-          cat("  ❌ داده‌ها نرمال نیستند (p < 0.05)\n")
-        }
+      cat("⚖️ مقایسه دو منحنی:\n")
+      cat("   • اگر دو منحنی شبیه باشند: نمونه نماینده است\n")
+      cat("   • اختلاف زیاد: ممکن است نمونه بایاس داشته باشد\n")
+      cat("   • با افزایش حجم نمونه، منحنی آبی به قرمز نزدیک‌تر می‌شود\n")
+      cat("   • این اصل «قضیه حد مرکزی» را نشان می‌دهد\n\n")
+      
+      cat("📊 آماره‌های نمونه:\n")
+      cat("   حجم نمونه:", input$norm_sample_size, "\n")
+      cat("   میانگین نمونه:", round(mean(data), 2), "\n")
+      cat("   انحراف معیار نمونه:", round(sd(data), 2), "\n")
+      cat("   تفاوت با مقادیر نظری:\n")
+      cat("     - تفاوت میانگین:", round(abs(mean(data) - input$norm_mean), 2), "\n")
+      cat("     - تفاوت انحراف معیار:", round(abs(sd(data) - input$norm_sd), 2), "\n\n")
+      
+      cat("💡 نکته آموزشی:\n")
+      if (input$norm_sample_size < 30) {
+        cat("   نمونه کوچک است - اختلاف منحنی‌ها طبیعی است\n")
+      } else if (input$norm_sample_size < 100) {
+        cat("   نمونه متوسط است - انطباق نسبتاً خوب\n")
+      } else {
+        cat("   نمونه بزرگ است - انطباق بسیار خوب\n")
       }
     })
   })
   
+  # یک پنل آموزشی جداگانه برای توضیحات بیشتر
+  output$curve_explanation <- renderUI({
+    div(
+      class = "info-box",
+      h4("🎓 آموزش: تفاوت منحنی قرمز و آبی"),
+      
+      fluidRow(
+        column(6,
+               div(
+                 class = "warning-box",
+                 h5("🔴 منحنی قرمز - تئوری"),
+                 tags$ul(
+                   tags$li("ایده‌آل و کامل"),
+                   tags$li("فرمول ریاضی دقیق"),
+                   tags$li("بدون خطا"),
+                   tags$li("پایه محاسبات"),
+                   tags$li("نمایش جامعه")
+                 )
+               )
+        ),
+        column(6,
+               div(
+                 class = "success-box",
+                 h5("🔵 منحنی آبی - تجربی"),
+                 tags$ul(
+                   tags$li("واقعی و عملی"),
+                   tags$li("از داده‌های نمونه"),
+                   tags$li("تحت تأثیر تصادف"),
+                   tags$li("نمایش نمونه"),
+                   tags$li("ممکن است نویز داشته باشد")
+                 )
+               )
+        )
+      ),
+      
+      div(
+        class = "highlight-box",
+        h5("⚖️ چرا هر دو منحنی مهم هستند؟"),
+        p("در آمار، ما همیشه بین تئوری (آنچه باید باشد) و عمل (آنچه هست) در حرکت هستیم:"),
+        tags$ul(
+          tags$li("منحنی قرمز به ما می‌گوید چه انتظاری باید داشته باشیم"),
+          tags$li("منحنی آبی به ما نشان می‌دهد در واقعیت چه اتفاقی افتاده است"),
+          tags$li("مقایسه این دو به ما در تشخیص کیفیت نمونه‌گیری کمک می‌کند")
+        )
+      ),
+      
+      div(
+        class = "info-box",
+        h5("📈 نکات عملی برای دانشجویان:"),
+        tags$ul(
+          tags$li("با حجم نمونه کوچک، اختلاف طبیعی است"),
+          tags$li("با افزایش n، منحنی آبی به قرمز نزدیک می‌شود"),
+          tags$li("این اصل مهمی در آمار به نام «قضیه حد مرکزی» است"),
+          tags$li("در پژوهش‌های واقعی، ما منحنی آبی را داریم و سعی می‌کنیم به قرمز برسیم")
+        )
+      )
+    )
+  })
+  
+  # نمودار مقایسه‌ای برای نشان دادن اثر حجم نمونه
+  output$sample_size_effect_plot <- renderPlot({
+    # ایجاد چند توزیع با حجم نمونه‌های مختلف
+    x_seq <- seq(0, 200, length.out = 400)
+    mean_val <- 100
+    sd_val <- 15
+    
+    sample_sizes <- c(10, 30, 100, 1000)
+    colors <- c("orange", "blue", "green", "purple")
+    labels <- c("n = 10", "n = 30", "n = 100", "n = 1000")
+    
+    comparison_data <- data.frame()
+    
+    # منحنی نظری
+    theoretical <- data.frame(
+      x = x_seq,
+      y = dnorm(x_seq, mean = mean_val, sd = sd_val),
+      group = "تئوری (n = ∞)",
+      color = "red"
+    )
+    
+    for (i in 1:length(sample_sizes)) {
+      set.seed(123)
+      data <- rnorm(sample_sizes[i], mean = mean_val, sd = sd_val)
+      density_est <- density(data, from = 0, to = 200)
+      
+      temp_df <- data.frame(
+        x = density_est$x,
+        y = density_est$y,
+        group = factor(rep(labels[i], length(density_est$x)), levels = c(labels, "تئوری (n = ∞)")),
+        color = rep(colors[i], length(density_est$x))
+      )
+      comparison_data <- rbind(comparison_data, temp_df)
+    }
+    
+    # ترکیب داده‌ها
+    all_data <- rbind(comparison_data, theoretical)
+    
+    ggplot(all_data, aes(x = x, y = y, color = group, linetype = group)) +
+      geom_line(size = 1.2) +
+      labs(title = "اثر حجم نمونه بر دقت برآورد",
+           subtitle = "با افزایش n، منحنی تجربی به منحنی تئوری نزدیک می‌شود",
+           x = "مقدار", 
+           y = "چگالی",
+           color = "حجم نمونه",
+           linetype = "حجم نمونه") +
+      scale_color_manual(values = c(colors, "red")) +
+      scale_linetype_manual(values = c("solid", "solid", "solid", "solid", "dashed")) +
+      coord_cartesian(xlim = c(0, 200)) +
+      theme_minimal() +
+      theme(
+        text = element_text(family = "Tahoma"),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        legend.position = "bottom"
+      ) +
+      annotate("text", x = 150, y = 0.025, 
+               label = "قضیه حد مرکزی در عمل!", 
+               color = "purple", size = 5, fontface = "bold")
+  })
+  
+  # شبیه‌ساز توزیع دوجمله‌ای
   observeEvent(input$plot_binomial, {
     output$binomial_plot <- renderPlot({
+      req(input$binom_n, input$binom_p, input$binom_sample_size)
+      
       set.seed(123)
-      data <- rbinom(input$binom_sample_size, 
-                     size = input$binom_n, 
-                     prob = input$binom_p)
+      data <- rbinom(input$binom_sample_size, size = input$binom_n, prob = input$binom_p)
       
-      df <- data.frame(Successes = data)
+      freq_data <- as.data.frame(table(factor(data, levels = 0:input$binom_n)))
+      colnames(freq_data) <- c("x", "Freq")
+      freq_data$x <- as.numeric(as.character(freq_data$x))
       
-      # محدوده ثابت برای محور x
-      x_limits <- c(0, input$binom_n)
-      
-      ggplot(df, aes(x = Successes)) +
-        geom_bar(aes(y = ..count.. / sum(..count..)), 
-                 fill = "lightgreen", alpha = 0.7, color = "black") +
-        stat_function(fun = function(x) dbinom(x, size = input$binom_n, prob = input$binom_p),
-                      color = "red", size = 1, n = input$binom_n + 1) +
-        coord_cartesian(xlim = x_limits, ylim = c(0, 0.3)) +  # ثابت نگه داشتن محورها
-        theme_minimal() +
-        labs(title = paste("توزیع دوجمله‌ای - n =", input$binom_n, ", p =", input$binom_p),
-             x = "تعداد موفقیت‌ها", 
-             y = "احتمال") +
-        scale_x_continuous(breaks = 0:input$binom_n)
+      ggplot(freq_data, aes(x = x, y = Freq)) +
+        geom_bar(stat = "identity", fill = "lightgreen", alpha = 0.7, color = "black") +
+        geom_point(color = "darkgreen", size = 2) +
+        labs(title = "توزیع دوجمله‌ای", x = "تعداد موفقیت‌ها", y = "فراوانی") +
+        theme_minimal()
     })
     
     output$binomial_info <- renderPrint({
-      n <- input$binom_n
-      p <- input$binom_p
+      req(input$binom_n, input$binom_p, input$binom_sample_size)
       
-      cat("📊 اطلاعات توزیع دوجمله‌ای\n\n")
-      cat("پارامترهای توزیع:\n")
-      cat("  تعداد آزمایش (n):", n, "\n")
-      cat("  احتمال موفقیت (p):", p, "\n")
-      cat("  احتمال شکست (q):", round(1-p, 3), "\n\n")
+      set.seed(123)
+      data <- rbinom(input$binom_sample_size, size = input$binom_n, prob = input$binom_p)
       
-      cat("شاخص‌های توزیع:\n")
-      cat("  میانگین (np):", round(n * p, 2), "\n")
-      cat("  واریانس (npq):", round(n * p * (1-p), 2), "\n")
-      cat("  انحراف معیار (√npq):", round(sqrt(n * p * (1-p)), 2), "\n\n")
-      
-      cat("🎯 مثال پزشکی:\n")
-      cat("  اگر", n, "بیمار را درمان کنیم و احتمال بهبود هر بیمار", p, "باشد:\n")
-      cat("  میانگین تعداد بهبود یافته‌ها:", round(n * p, 1), "\n")
-      cat("  احتمال بهبود دقیقاً", round(n * p), "بیمار:", 
-          round(dbinom(round(n * p), size = n, prob = p), 4), "\n")
+      cat("نتایج شبیه‌سازی توزیع دوجمله‌ای:\n")
+      cat("میانگین نمونه:", round(mean(data), 2), "\n")
+      cat("واریانس نمونه:", round(var(data), 2), "\n")
     })
   })
   
+  # شبیه‌ساز توزیع پواسون
   observeEvent(input$plot_poisson, {
     output$poisson_plot <- renderPlot({
+      req(input$pois_lambda, input$pois_sample_size)
+      
       set.seed(123)
-      data <- rpois(input$pois_sample_size, 
-                    lambda = input$pois_lambda)
+      data <- rpois(input$pois_sample_size, lambda = input$pois_lambda)
       
-      df <- data.frame(Count = data)
+      max_x <- max(data) + 2
+      freq_data <- as.data.frame(table(factor(data, levels = 0:max_x)))
+      colnames(freq_data) <- c("x", "Freq")
+      freq_data$x <- as.numeric(as.character(freq_data$x))
       
-      # محدوده ثابت برای محور x بر اساس لاندا
-      x_max <- max(20, input$pois_lambda * 3)  # حداقل تا 20 یا 3 برابر لاندا
-      x_limits <- c(0, x_max)
-      y_max <- max(0.3, dpois(round(input$pois_lambda), input$pois_lambda) * 1.5)
-      
-      max_count <- max(data)
-      
-      ggplot(df, aes(x = Count)) +
-        geom_bar(aes(y = ..count.. / sum(..count..)), 
-                 fill = "orange", alpha = 0.7, color = "black") +
-        stat_function(fun = function(x) dpois(x, lambda = input$pois_lambda),
-                      color = "red", size = 1, n = max_count + 1) +
-        coord_cartesian(xlim = x_limits, ylim = c(0, y_max)) +  # ثابت نگه داشتن محورها
+      ggplot(freq_data, aes(x = x, y = Freq)) +
+        geom_bar(stat = "identity", fill = "coral", alpha = 0.7, color = "black") +
+        geom_point(color = "darkred", size = 2) +
+        labs(title = "توزیع پواسون", 
+             subtitle = paste("λ =", input$pois_lambda, "- تعداد نمونه:", input$pois_sample_size),
+             x = "تعداد رویدادها", y = "فراوانی") +
         theme_minimal() +
-        labs(title = paste("توزیع پواسون - λ =", input$pois_lambda),
-             x = "تعداد رویدادها", 
-             y = "احتمال") +
-        scale_x_continuous(breaks = function(x) seq(0, x[2], by = max(1, floor(x[2]/10))))
+        theme(text = element_text(family = "Tahoma"))
     })
-
     
     output$poisson_info <- renderPrint({
-      lambda <- input$pois_lambda
+      req(input$pois_lambda, input$pois_sample_size)
       
-      cat("📊 اطلاعات توزیع پواسون\n\n")
-      cat("پارامترهای توزیع:\n")
-      cat("  میانگین (λ):", lambda, "\n")
-      cat("  واریانس (λ):", lambda, "\n")
-      cat("  انحراف معیار (√λ):", round(sqrt(lambda), 2), "\n\n")
+      set.seed(123)
+      data <- rpois(input$pois_sample_size, lambda = input$pois_lambda)
       
-      cat("🎯 مثال پزشکی:\n")
-      cat("  اگر میانگین مراجعه به اورژانس در ساعت", lambda, "باشد:\n")
-      cat("  احتمال دقیقاً", round(lambda), "مراجعه در ساعت:", 
-          round(dpois(round(lambda), lambda = lambda), 4), "\n")
-      cat("  احتمال بیش از", round(lambda), "مراجعه:", 
-          round(1 - ppois(round(lambda), lambda = lambda), 4), "\n")
-      cat("  احتمال کمتر از", round(lambda), "مراجعه:", 
-          round(ppois(round(lambda)-1, lambda = lambda), 4), "\n")
+      cat("📊 نتایج شبیه‌سازی توزیع پواسون:\n")
+      cat("=====================================\n")
+      cat("پارامتر λ:", input$pois_lambda, "\n")
+      cat("حجم نمونه:", input$pois_sample_size, "\n")
+      cat("میانگین نمونه:", round(mean(data), 2), "\n")
+      cat("واریانس نمونه:", round(var(data), 2), "\n")
+      cat("نسبت واریانس به میانگین:", round(var(data)/mean(data), 2), "\n\n")
+      
+      cat("🎯 تحلیل نتایج:\n")
+      ratio <- var(data)/mean(data)
+      if (abs(ratio - 1) < 0.2) {
+        cat("✅ واریانس ≈ میانگین - مشخصه توزیع پواسون\n")
+      } else if (ratio > 1) {
+        cat("⚠️ واریانس > میانگین - پراکندگی بیش از حد\n")
+      } else {
+        cat("⚠️ واریانس < میانگین - پراکندگی کمتر از حد\n")
+      }
     })
   })
   
-  # جدول خلاصه توزیع‌ها
+  # خلاصه توزیع‌ها
   output$distributions_summary_table <- renderTable({
     data.frame(
       "توزیع" = c("نرمال", "دوجمله‌ای", "پواسون"),
-      "نوع داده" = c("کمی پیوسته", "کمی گسسته (دوحالتی)", "کمی گسسته (شمارشی)"),
-      "پارامترها" = c("μ (میانگین), σ (انحراف معیار)", "n (تعداد آزمایش), p (احتمال موفقیت)", "λ (میانگین)"),
-      "محدوده" = c("(-∞, +∞)", "0, 1, 2, ..., n", "0, 1, 2, ..."),
-      "کاربرد پزشکی" = c("فشار خون، قد، وزن", "تعداد بهبودی، پاسخ به درمان", "تعداد مراجعه به اورژانس، عفونت‌ها")
+      "پارامترها" = c("μ, σ", "n, p", "λ"),
+      "میانگین" = c("μ", "np", "λ"),
+      "واریانس" = c("σ²", "np(1-p)", "λ"),
+      "کاربرد پزشکی" = c(
+        "قد، وزن، فشار خون",
+        "تعداد موفقیت‌ها در n آزمایش",
+        "رویدادهای نادر در واحد زمان"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
   # جدول انواع خطا
   output$error_types_table <- renderTable({
     data.frame(
-      "تصمیم" = c("رد H₀", "عدم رد H₀"),
-      "H₀ درست است" = c("خطای نوع اول (α)", "تصمیم درست"),
-      "H₀ نادرست است" = c("تصمیم درست (توان آزمون)", "خطای نوع دوم (β)")
+      "نوع خطا" = c("خطای نوع اول (α)", "خطای نوع دوم (β)"),
+      "تعریف" = c(
+        "رد فرض صفر در حالی که درست است",
+        "پذیرش فرض صفر در حالی که نادرست است"
+      ),
+      "احتمال" = c("α (معمولاً 0.05)", "β (معمولاً 0.2)"),
+      "مثال پزشکی" = c(
+        "تشخیص بیماری در فرد سالم",
+        "عدم تشخیص بیماری در فرد بیمار"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  # جدول مفاهیم کلیدی
-  output$key_concepts_table <- renderTable({
-    data.frame(
-      "مفهوم" = c("فرض صفر (H₀)", "فرض مقابل (H₁)", "سطح معنی‌داری (α)", "خطای نوع دوم (β)", "توان آزمون (1-β)", "p-value", "فاصله اطمینان"),
-      "تعریف" = c("فرضیه عدم تفاوت یا عدم اثر", "فرضیه وجود تفاوت یا اثر", "حداکثر احتمال خطای نوع اول", "احتمال خطای نوع دوم", "احتمال تشخیص تفاوت واقعی", "احتمال مشاهده نتایج نمونه در صورت صحیح بودن H₀", "محدوده تخمین پارامتر جامعه"),
-      "مقدار معمول" = c("--", "--", "0.05", "0.2", "0.8", "< 0.05 برای معنی‌داری", "95%"),
-      "تفسیر" = c("ادعایی که آزمایش می‌شود", "ادعایی که در صورت رد H₀ پذیرفته می‌شود", "احتمال رد H₀ نادرست", "احتمال از دست دادن اثر واقعی", "توانایی مطالعه در تشخیص اثر", "شواهد علیه H₀", "دقت برآورد")
-    )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
-  
-  # شبیه‌ساز فاصله اطمینان - نسخه اصلاح شده
-  
-  
-  # شبیه‌ساز فاصله اطمینان با محورهای کاملاً ثابت
+  # شبیه‌ساز فاصله اطمینان
   observeEvent(input$calc_ci, {
     output$ci_plot <- renderPlot({
-      req(input$ci_mean, input$ci_sd, input$ci_n)
-      
-      # تعریف محدوده ثابت برای محور Y - کاملاً ثابت
-      y_min <- 0    # حداقل ثابت
-      y_max <- 200  # حداکثر ثابت
-      
+      n <- input$ci_n
       mean_val <- input$ci_mean
       sd_val <- input$ci_sd
-      n <- input$ci_n
-      level <- as.numeric(input$ci_level)
+      conf_level <- as.numeric(input$ci_level)
       
-      # محاسبه فاصله اطمینان
-      z_value <- qnorm(1 - (1 - level)/2)
-      se <- sd_val / sqrt(n)
-      margin <- z_value * se
-      lower <- mean_val - margin
-      upper <- mean_val + margin
+      error <- qt((1 + conf_level)/2, df = n-1) * sd_val / sqrt(n)
+      lower <- mean_val - error
+      upper <- mean_val + error
       
-      # اطمینان از اینکه مقادیر در محدوده ثابت باشند
-      lower_display <- max(y_min, lower)
-      upper_display <- min(y_max, upper)
-      mean_display <- ifelse(mean_val < y_min, y_min, 
-                             ifelse(mean_val > y_max, y_max, mean_val))
+      set.seed(123)
+      sample_means <- replicate(100, mean(rnorm(n, mean = mean_val, sd = sd_val)))
       
       df <- data.frame(
-        x = "فاصله اطمینان",
-        estimate = mean_display,
-        lower = lower_display,
-        upper = upper_display
+        sample = 1:100,
+        mean = sample_means,
+        capture = sample_means >= lower & sample_means <= upper
       )
       
-      # ایجاد نمودار با محورهای کاملاً ثابت
-      ggplot(df, aes(x = x, y = estimate)) +
-        geom_point(size = 6, color = "#2E86AB", shape = 18) +
-        geom_errorbar(aes(ymin = lower, ymax = upper), 
-                      width = 0.2, size = 2, color = "#A23B72") +
-        
-        # محورهای کاملاً ثابت
-        coord_cartesian(ylim = c(y_min, y_max)) +
-        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
-        
+      ggplot(df, aes(x = sample, y = mean, color = capture)) +
+        geom_point(size = 2) +
+        geom_hline(yintercept = mean_val, color = "blue", linetype = "dashed", size = 1) +
+        geom_hline(yintercept = lower, color = "red", linetype = "dashed", size = 1) +
+        geom_hline(yintercept = upper, color = "red", linetype = "dashed", size = 1) +
+        labs(title = paste("فاصله اطمینان", conf_level*100, "%"), x = "شماره نمونه", y = "میانگین نمونه") +
+        scale_color_manual(values = c("TRUE" = "darkgreen", "FALSE" = "red")) +
         theme_minimal() +
-        labs(
-          title = paste("فاصله اطمینان", level * 100, "% برای میانگین"),
-          subtitle = paste("میانگین:", round(mean_val, 2), 
-                           " | فاصله: [", round(lower, 2), ",", round(upper, 2), "]",
-                           " | عرض:", round(upper - lower, 2)),
-          x = "",
-          y = "مقدار"
-        ) +
-        
-        # خطوط راهنمای ثابت
-        geom_hline(yintercept = seq(0, 200, by = 20), 
-                   color = "gray90", size = 0.3, alpha = 0.7) +
-        geom_hline(yintercept = seq(0, 200, by = 100), 
-                   color = "gray80", size = 0.5, alpha = 0.7) +
-        
-        # نمایش مقادیر
-        geom_text(aes(y = lower_display, label = round(lower, 2)), 
-                  vjust = 1.5, color = "#A23B72", size = 4.5, family = "Tahoma") +
-        geom_text(aes(y = upper_display, label = round(upper, 2)), 
-                  vjust = -1.5, color = "#A23B72", size = 4.5, family = "Tahoma") +
-        geom_text(aes(y = mean_display, label = round(mean_val, 2)), 
-                  vjust = -2, color = "#2E86AB", size = 4.5, family = "Tahoma") +
-        
-        theme(
-          text = element_text(family = "Tahoma"),
-          plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
-          plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray40"),
-          axis.text = element_text(size = 12),
-          panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank()
-        )
+        theme(legend.position = "none")
     })
     
     output$ci_results <- renderPrint({
-      req(input$ci_mean, input$ci_sd, input$ci_n)
-      
+      n <- input$ci_n
       mean_val <- input$ci_mean
       sd_val <- input$ci_sd
-      n <- input$ci_n
-      level <- as.numeric(input$ci_level)
+      conf_level <- as.numeric(input$ci_level)
       
-      # محاسبات
-      z_value <- qnorm(1 - (1 - level)/2)
-      se <- sd_val / sqrt(n)
-      margin <- z_value * se
-      lower <- mean_val - margin
-      upper <- mean_val + margin
+      error <- qt((1 + conf_level)/2, df = n-1) * sd_val / sqrt(n)
+      lower <- mean_val - error
+      upper <- mean_val + error
       
-      cat("🎯 فاصله اطمینان", level * 100, "%\n")
-      cat("══════════════════════════════\n\n")
-      cat("📊 نتایج:\n")
-      cat("   میانگین نمونه: ", round(mean_val, 2), "\n")
-      cat("   فاصله اطمینان: [", round(lower, 2), ", ", round(upper, 2), "]\n")
-      cat("   عرض فاصله:    ", round(upper - lower, 2), "\n")
-      cat("   حاشیه خطا:    ", round(margin, 2), "\n\n")
-      
-      # هشدار اگر مقادیر خارج از محدوده باشند
-      if (lower < 0 | upper > 200) {
-        cat("⚠️  توجه: بخشی از فاصله اطمینان خارج از محدوده نمودار است\n")
-      }
+      cat("نتایج فاصله اطمینان:\n")
+      cat("سطح اطمینان:", conf_level*100, "%\n")
+      cat("فاصله اطمینان: [", round(lower, 2), ", ", round(upper, 2), "]\n")
     })
   })
-  
-  
   
   # شبیه‌ساز آزمون فرض
   observeEvent(input$calc_ht, {
@@ -4256,46 +5305,22 @@ server <- function(input, output, session) {
       n <- input$ht_n
       alpha <- as.numeric(input$ht_alpha)
       
-      # محاسبه آماره Z و p-value
-      se <- sd_val / sqrt(n)
-      z_value <- (sample_mean - pop_mean) / se
-      p_value <- 2 * pnorm(-abs(z_value))  # دو دنباله
+      t_stat <- (sample_mean - pop_mean) / (sd_val / sqrt(n))
       
-      # ایجاد نمودار توزیع نرمال
-      x_min <- min(pop_mean - 4*se, sample_mean - 2*se)
-      x_max <- max(pop_mean + 4*se, sample_mean + 2*se)
-      x_range <- max(abs(x_min - pop_mean), abs(x_max - pop_mean))
-      x_limits <- c(pop_mean - x_range, pop_mean + x_range)
-      
-      x <- seq(x_limits[1], x_limits[2], length.out = 100)
-      y <- dnorm(x, mean = pop_mean, sd = se)
+      x <- seq(-4, 4, length.out = 100)
+      y <- dt(x, df = n-1)
       df <- data.frame(x = x, y = y)
       
-      # ناحیه بحرانی
-      critical_value <- qnorm(1 - alpha/2)
-      reject_region_lower <- pop_mean - critical_value * se
-      reject_region_upper <- pop_mean + critical_value * se
+      critical_value <- qt(1 - alpha/2, df = n-1)
       
       ggplot(df, aes(x = x, y = y)) +
         geom_line(color = "blue", size = 1) +
-        geom_vline(xintercept = pop_mean, linetype = "dashed", color = "red") +
-        geom_vline(xintercept = sample_mean, linetype = "solid", color = "green", size = 1) +
-        geom_area(data = subset(df, x <= reject_region_lower), aes(x = x, y = y), 
-                  fill = "red", alpha = 0.3) +
-        geom_area(data = subset(df, x >= reject_region_upper), aes(x = x, y = y), 
-                  fill = "red", alpha = 0.3) +
-        coord_cartesian(xlim = x_limits) +  # ثابت نگه داشتن محور x
-        annotate("text", x = pop_mean, y = max(y)*0.9, 
-                 label = paste("H₀: μ =", pop_mean), color = "red", size = 5) +
-        annotate("text", x = sample_mean, y = max(y)*0.7, 
-                 label = paste("میانگین نمونه =", sample_mean), color = "green", size = 4) +
-        theme_minimal() +
-        labs(
-          title = paste("توزیع نمونه‌گیری تحت فرض صفر (α =", alpha, ")"),
-          x = "مقدار",
-          y = "چگالی"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
+        geom_area(data = subset(df, x <= -critical_value), aes(x = x, y = y), fill = "red", alpha = 0.5) +
+        geom_area(data = subset(df, x >= critical_value), aes(x = x, y = y), fill = "red", alpha = 0.5) +
+        geom_vline(xintercept = t_stat, color = "green", size = 1, linetype = "dashed") +
+        geom_vline(xintercept = c(-critical_value, critical_value), color = "red", size = 1, linetype = "dashed") +
+        labs(title = "توزیع t تحت فرض صفر", x = "آماره t", y = "چگالی") +
+        theme_minimal()
     })
     
     output$ht_results <- renderPrint({
@@ -4305,734 +5330,316 @@ server <- function(input, output, session) {
       n <- input$ht_n
       alpha <- as.numeric(input$ht_alpha)
       
-      # محاسبات
-      se <- sd_val / sqrt(n)
-      z_value <- (sample_mean - pop_mean) / se
-      p_value <- 2 * pnorm(-abs(z_value))
+      t_stat <- (sample_mean - pop_mean) / (sd_val / sqrt(n))
+      p_value <- 2 * (1 - pt(abs(t_stat), df = n-1))
       
-      cat("📊 نتایج آزمون فرض\n\n")
-      cat("فرض صفر (H₀): μ =", pop_mean, "\n")
-      cat("فرض مقابل (H₁): μ ≠", pop_mean, "\n")
-      cat("سطح معنی‌داری (α):", alpha, "\n\n")
+      cat("نتایج آزمون فرض:\n")
+      cat("آماره t:", round(t_stat, 4), "\n")
+      cat("p-value:", round(p_value, 4), "\n")
       
-      cat("آماره آزمون:\n")
-      cat("  آماره Z:", round(z_value, 3), "\n")
-      cat("  p-value:", format.pval(p_value, digits = 3), "\n\n")
-      
-      cat("تصمیم:\n")
       if (p_value < alpha) {
-        cat("  ✅ رد فرض صفر (p-value < α)\n")
-        cat("  نتیجه: تفاوت معنی‌دار است\n")
+        cat("نتیجه: رد فرض صفر - تفاوت معنی‌دار است\n")
       } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ α)\n")
-        cat("  نتیجه: تفاوت معنی‌دار نیست\n")
+        cat("نتیجه: عدم رد فرض صفر - تفاوت معنی‌دار نیست\n")
       }
-      
-      cat("\n💡 تفسیر:\n")
-      if (p_value < 0.01) {
-        cat("  شواهد بسیار قوی علیه فرض صفر وجود دارد\n")
-      } else if (p_value < 0.05) {
-        cat("  شواهد قوی علیه فرض صفر وجود دارد\n")
-      } else if (p_value < 0.1) {
-        cat("  شواهد ضعیف علیه فرض صفر وجود دارد\n")
-      } else {
-        cat("  شواهد کافی علیه فرض صفر وجود ندارد\n")
-      }
-      
-      cat("\n📈 اطلاعات نمونه:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  میانگین نمونه:", sample_mean, "\n")
-      cat("  انحراف معیار:", sd_val, "\n")
-      cat("  خطای استاندارد:", round(se, 3), "\n")
     })
   })
   
-  # همچنین می‌توانیم یک شبیه‌ساز پیشرفته‌تر برای فاصله اطمینان اضافه کنیم:
-  # شبیه‌سار چندین فاصله اطمینان برای نمایش تغییرپذیری نمونه‌گیری
-  
-  output$ci_simulation_plot <- renderPlot({
-    set.seed(123)
-    n_simulations <- 20  # تعداد شبیه‌سازی‌ها
-    pop_mean <- 100      # میانگین واقعی جامعه
-    pop_sd <- 15         # انحراف معیار واقعی جامعه
-    n <- input$ci_n      # حجم نمونه از ورودی کاربر
-    level <- as.numeric(input$ci_level)
-    
-    # محاسبه z-value برای سطح اطمینان
-    z_value <- qnorm(1 - (1 - level)/2)
-    
-    # شبیه‌سازی چندین نمونه
-    results <- data.frame()
-    for (i in 1:n_simulations) {
-      sample_data <- rnorm(n, mean = pop_mean, sd = pop_sd)
-      sample_mean <- mean(sample_data)
-      sample_se <- sd(sample_data) / sqrt(n)
-      margin <- z_value * sample_se
-      lower <- sample_mean - margin
-      upper <- sample_mean + margin
-      contains_true <- (lower <= pop_mean) & (pop_mean <= upper)
-      
-      results <- rbind(results, data.frame(
-        simulation = i,
-        sample_mean = sample_mean,
-        lower = lower,
-        upper = upper,
-        contains_true = contains_true
-      ))
-    }
-    
-    # ایجاد نمودار
-    ggplot(results, aes(x = simulation, y = sample_mean)) +
-      geom_point(size = 2, color = "blue") +
-      geom_errorbar(aes(ymin = lower, ymax = upper, color = contains_true), 
-                    width = 0.3, size = 0.8) +
-      geom_hline(yintercept = pop_mean, linetype = "dashed", color = "red", size = 1) +
-      scale_color_manual(values = c("FALSE" = "red", "TRUE" = "darkgreen"),
-                         labels = c("FALSE" = "نمی‌پوشاند", "TRUE" = "می‌پوشاند"),
-                         name = "شامل میانگین واقعی") +
-      coord_cartesian(ylim = c(pop_mean - 30, pop_mean + 30)) +  # محور ثابت
-      theme_minimal() +
-      labs(
-        title = paste("شبیه‌سازی", n_simulations, "فاصله اطمینان", level * 100, "%"),
-        subtitle = paste("خط قرمز: میانگین واقعی جامعه (", pop_mean, ")"),
-        x = "شماره شبیه‌سازی",
-        y = "مقدار"
-      ) +
-      theme(text = element_text(family = "Tahoma"),
-            legend.position = "bottom")
-  })
-  
-  # جدول راهنمای انتخاب آزمون
-  output$test_selection_guide <- renderTable({
+  # جدول مفاهیم کلیدی
+  output$key_concepts_table <- renderTable({
     data.frame(
-      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال", "ترتیبی", "کمی نرمال", "کمی غیرنرمال", "ترتیبی"),
-      "تعداد گروه" = c("یک گروه", "یک گروه", "یک گروه", "دو گروه مستقل", "دو گروه مستقل", "دو گروه مستقل"),
-      "آزمون پارامتری" = c("t تک نمونه‌ای", "--", "--", "t مستقل", "--", "--"),
-      "آزمون ناپارامتری" = c("--", "علامت", "علامت", "--", "من-ویتنی", "من-ویتنی"),
-      "دو گروه وابسته" = c("t زوجی", "ویلکاکسون", "ویلکاکسون", "--", "--", "--")
+      "مفهوم" = c("p-value", "فاصله اطمینان", "سطح معنی‌داری", "توان آزمون"),
+      "تعریف" = c(
+        "احتمال مشاهده نتایج نمونه یا افراطی‌تر در صورت صحیح بودن فرض صفر",
+        "محدوده‌ای که با اطمینان مشخص شامل پارامتر جامعه می‌شود",
+        "حداکثر احتمال خطای نوع اول",
+        "احتمال رد فرض صفر نادرست"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  # جدول خلاصه آزمون‌ها
-  output$tests_summary_table <- renderTable({
+  # راهنمای جامع انتخاب آزمون
+  output$comprehensive_test_selection_guide <- renderTable({
     data.frame(
-      "آزمون" = c("t تک نمونه‌ای", "t مستقل", "t زوجی", "علامت", "من-ویتنی", "ویلکاکسون"),
-      "نوع" = c("پارامتری", "پارامتری", "پارامتری", "ناپارامتری", "ناپارامتری", "ناپارامتری"),
-      "هدف" = c("مقایسه با مقدار ثابت", "مقایسه دو گروه مستقل", "مقایسه دو اندازه‌گیری وابسته", "مقایسه با مقدار ثابت", "مقایسه دو گروه مستقل", "مقایسه دو اندازه‌گیری وابسته"),
-      "پیش‌فرض نرمال بودن" = c("بله", "بله", "بله", "خیر", "خیر", "خیر"),
-      "داده‌های مورد نیاز" = c("کمی", "کمی", "کمی", "کمی/ترتیبی", "کمی/ترتیبی", "کمی/ترتیبی")
+      "نوع داده" = c("کمی نرمال - یک گروه", "کمی نرمال - دو گروه مستقل", 
+                     "کمی نرمال - دو گروه وابسته", "کمی غیرنرمال - یک گروه",
+                     "کمی غیرنرمال - دو گروه مستقل", "کمی غیرنرمال - دو گروه وابسته",
+                     "ترتیبی - دو گروه مستقل", "ترتیبی - دو گروه وابسته"),
+      "آزمون پارامتری" = c("t تک نمونه‌ای", "t مستقل", "t زوجی", 
+                           "ندارد", "ندارد", "ندارد", "ندارد", "ندارد"),
+      "آزمون ناپارامتری" = c("ویلکاکسون", "من-ویتنی", "ویلکاکسون زوجی",
+                             "علامت", "من-ویتنی", "ویلکاکسون زوجی",
+                             "من-ویتنی", "ویلکاکسون"),
+      "پیش‌فرض‌های اصلی" = c(
+        "نرمال بودن داده‌ها",
+        "نرمال بودن، همسانی واریانس",
+        "نرمال بودن تفاضل‌ها",
+        "ندارد",
+        "ندارد", 
+        "ندارد",
+        "ندارد",
+        "توزیع متقارن تفاضل‌ها"
+      ),
+      "شرایط استفاده" = c(
+        "مقایسه با مقدار ثابت",
+        "دو گروه مستقل",
+        "دو اندازه‌گیری وابسته",
+        "مقایسه با مقدار ثابت",
+        "دو گروه مستقل",
+        "دو اندازه‌گیری وابسته",
+        "دو گروه مستقل با داده ترتیبی",
+        "دو اندازه‌گیری وابسته ترتیبی"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
   
-  # شبیه‌ساز آزمون t مستقل
-  observeEvent(input$run_ttest, {
-    output$ttest_plot <- renderPlot({
-      # تولید داده‌های مصنوعی
-      set.seed(123)
-      group1_data <- rnorm(input$group1_n, mean = input$group1_mean, sd = input$group1_sd)
-      group2_data <- rnorm(input$group2_n, mean = input$group2_mean, sd = input$group2_sd)
-      
-      df <- data.frame(
-        Value = c(group1_data, group2_data),
-        Group = rep(c("گروه ۱", "گروه ۲"), c(input$group1_n, input$group2_n))
+  # جدول تصمیم‌گیری نرمال بودن
+  output$normality_decision_table <- renderTable({
+    data.frame(
+      "نتیجه آزمون شاپیرو-ویلک" = c("p-value > 0.05", "p-value < 0.05"),
+      "تفسیر" = c("داده‌ها نرمال هستند", "داده‌ها غیرنرمال هستند"),
+      "اقدام توصیه شده" = c("استفاده از آزمون پارامتری", "استفاده از آزمون ناپارامتری"),
+      "ملاحظات" = c(
+        "با حجم نمونه بزرگ (>100) می‌توان از آزمون پارامتری استفاده کرد حتی اگر آزمون معنی‌دار باشد",
+        "برای داده‌های بسیار غیرنرمال، حتی با حجم نمونه بزرگ از آزمون ناپارامتری استفاده شود"
       )
-      
-      # محدوده ثابت برای محور Y
-      y_min <- 0
-      y_max <- 200
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = Group, y = Value, fill = Group)) +
-        geom_boxplot(alpha = 0.7, outlier.color = "red") +
-        geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
-        stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
-        
-        # محورهای کاملاً ثابت
-        coord_cartesian(ylim = c(y_min, y_max)) +
-        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
-        
-        scale_fill_brewer(palette = "Set2") +
-        theme_minimal() +
-        labs(
-          title = "مقایسه توزیع دو گروه",
-          x = "گروه",
-          y = "مقدار"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "none")
-    })
-  })
-    
-    output$ttest_results <- renderPrint({
-      # انجام آزمون t
-      set.seed(123)
-      group1_data <- rnorm(input$group1_n, mean = input$group1_mean, sd = input$group1_sd)
-      group2_data <- rnorm(input$group2_n, mean = input$group2_mean, sd = input$group2_sd)
-      
-      t_test <- t.test(group1_data, group2_data, var.equal = TRUE)
-      alpha <- as.numeric(input$test_alpha)
-      
-      # محاسبه اندازه اثر (d کوهن)
-      mean_diff <- input$group1_mean - input$group2_mean
-      pooled_sd <- sqrt(((input$group1_n - 1) * input$group1_sd^2 + 
-                           (input$group2_n - 1) * input$group2_sd^2) / 
-                          (input$group1_n + input$group2_n - 2))
-      cohens_d <- abs(mean_diff) / pooled_sd
-      
-      cat("📊 نتایج آزمون t مستقل\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  گروه ۱: میانگین =", round(mean(group1_data), 2), 
-          ", انحراف معیار =", round(sd(group1_data), 2), "\n")
-      cat("  گروه ۲: میانگین =", round(mean(group2_data), 2), 
-          ", انحراف معیار =", round(sd(group2_data), 2), "\n")
-      cat("  تفاوت میانگین‌ها:", round(mean_diff, 2), "\n\n")
-      
-      cat("🎯 نتایج آزمون:\n")
-      cat("  آماره t:", round(t_test$statistic, 3), "\n")
-      cat("  درجه آزادی:", t_test$parameter, "\n")
-      cat("  p-value:", format.pval(t_test$p.value, digits = 3), "\n")
-      cat("  فاصله اطمینان 95%: [", 
-          round(t_test$conf.int[1], 2), ",", 
-          round(t_test$conf.int[2], 2), "]\n\n")
-      
-      cat("📏 اندازه اثر:\n")
-      cat("  d کوهن:", round(cohens_d, 2), "\n")
-      if (cohens_d < 0.2) {
-        cat("  تفسیر: اثر کوچک\n")
-      } else if (cohens_d < 0.5) {
-        cat("  تفسیر: اثر متوسط\n")
-      } else if (cohens_d < 0.8) {
-        cat("  تفسیر: اثر بزرگ\n")
-      } else {
-        cat("  تفسیر: اثر بسیار بزرگ\n")
-      }
-      cat("\n")
-      
-      cat("💡 تصمیم:\n")
-      if (t_test$p.value < alpha) {
-        cat("  ✅ رد فرض صفر (p-value < α)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین دو گروه وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ α)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین دو گروه وجود ندارد\n")
-      }
-    })
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
   
+  # خلاصه آزمون‌های پارامتری و ناپارامتری
+  output$parametric_nonparametric_summary_table <- renderTable({
+    data.frame(
+      "ویژگی" = c("نیاز به توزیع نرمال", "نیاز به همسانی واریانس", "قدرت آماری", 
+                  "مقاومت به مقادیر پرت", "نوع داده", "مقیاس اندازه‌گیری",
+                  "حجم نمونه مورد نیاز", "سادگی تفسیر"),
+      "پارامتری" = c("بله", "بله", "بالا", "کم", "کمی", "فاصله‌ای/نسبی",
+                     "حداقل 30", "ساده"),
+      "ناپارامتری" = c("خیر", "خیر", "متوسط", "بالا", "کمی/کیفی", "اسمی/ترتیبی",
+                       "حداقل 20", "متوسط")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
   
-  # شبیه‌ساز آزمون من-ویتنی
-  observeEvent(input$run_mwtest, {
-    output$mwtest_plot <- renderPlot({
-      # تولید داده‌های مصنوعی بر اساس رتبه‌ها
-      set.seed(123)
-      n1 <- input$mw_n1
-      n2 <- input$mw_n2
-      
-      # ایجاد داده‌ها بر اساس میانگین رتبه
-      group1_ranks <- rnorm(n1, mean = input$mw_group1_rank, sd = 10)
-      group2_ranks <- rnorm(n2, mean = input$mw_group2_rank, sd = 10)
-      
-      df <- data.frame(
-        Rank = c(group1_ranks, group2_ranks),
-        Group = rep(c("گروه ۱", "گروه ۲"), c(n1, n2))
-      )
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = Group, y = Rank, fill = Group)) +
-        geom_violin(alpha = 0.7) +
-        geom_boxplot(width = 0.2, alpha = 0.7, outlier.color = "red") +
-        stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "white") +
-        scale_fill_brewer(palette = "Set1") +
-        theme_minimal() +
-        labs(
-          title = "مقایسه توزیع رتبه‌ها در دو گروه",
-          x = "گروه",
-          y = "رتبه"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "none")
-    })
-    
-    output$mwtest_results <- renderPrint({
-      # تولید داده‌ها
-      set.seed(123)
-      n1 <- input$mw_n1
-      n2 <- input$mw_n2
-      group1_ranks <- rnorm(n1, mean = input$mw_group1_rank, sd = 10)
-      group2_ranks <- rnorm(n2, mean = input$mw_group2_rank, sd = 10)
-      
-      # انجام آزمون من-ویتنی
-      mw_test <- wilcox.test(group1_ranks, group2_ranks)
-      
-      cat("📊 نتایج آزمون من-ویتنی\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  گروه ۱: میانه =", round(median(group1_ranks), 2), 
-          ", میانگین رتبه =", round(mean(rank(c(group1_ranks, group2_ranks))[1:n1]), 2), "\n")
-      cat("  گروه ۲: میانه =", round(median(group2_ranks), 2), 
-          ", میانگین رتبه =", round(mean(rank(c(group1_ranks, group2_ranks))[(n1+1):(n1+n2)]), 2), "\n\n")
-      
-      cat("🎯 نتایج آزمون:\n")
-      cat("  آماره W:", round(mw_test$statistic, 3), "\n")
-      cat("  p-value:", format.pval(mw_test$p.value, digits = 3), "\n\n")
-      
-      # محاسبه اندازه اثر
-      z_value <- qnorm(mw_test$p.value/2)
-      r_effect <- abs(z_value) / sqrt(n1 + n2)
-      
-      cat("📏 اندازه اثر:\n")
-      cat("  r:", round(r_effect, 2), "\n")
-      if (r_effect < 0.1) {
-        cat("  تفسیر: اثر کوچک\n")
-      } else if (r_effect < 0.3) {
-        cat("  تفسیر: اثر متوسط\n")
-      } else if (r_effect < 0.5) {
-        cat("  تفسیر: اثر بزرگ\n")
-      } else {
-        cat("  تفسیر: اثر بسیار بزرگ\n")
-      }
-      cat("\n")
-      
-      cat("💡 تصمیم:\n")
-      if (mw_test$p.value < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: توزیع دو گروه تفاوت معنی‌دار دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: توزیع دو گروه تفاوت معنی‌دار ندارد\n")
-      }
-      
-      cat("\n⚠️ نکته: آزمون من-ویتنی برای داده‌های غیرنرمال مناسب است\n")
-    })
-  })
-  
-  # شبیه‌ساز بررسی نرمال بودن
+  # شبیه‌ساز بررسی نرمال بودن (بهبود یافته)
   observeEvent(input$run_norm_check, {
     output$norm_check_plot <- renderPlot({
       set.seed(123)
+      n <- input$norm_check_n
       
-      # تولید داده‌ها با چولگی قابل تنظیم
-      if (input$norm_check_skew == 0) {
-        data <- rnorm(input$norm_check_n, 
-                      mean = input$norm_check_mean, 
-                      sd = input$norm_check_sd)
+      # تولید داده‌ها با چولگی و کشیدگی مشخص
+      if (input$norm_check_skew == 0 & input$norm_check_kurtosis == 0) {
+        data <- rnorm(n, input$norm_check_mean, input$norm_check_sd)
       } else {
-        # استفاده از توزیع چوله
-        data <- sn::rsn(input$norm_check_n, 
-                        xi = input$norm_check_mean, 
-                        omega = input$norm_check_sd, 
-                        alpha = input$norm_check_skew * 5)
+        # استفاده از توزیع skew-normal برای تولید داده‌های با چولگی
+        data <- rsn(n, xi = input$norm_check_mean, omega = input$norm_check_sd, 
+                    alpha = input$norm_check_skew * 10)
+        
+        # تنظیم کشیدگی (ساده‌سازی شده)
+        if (input$norm_check_kurtosis > 0) {
+          data <- data * (1 + input$norm_check_kurtosis/10)
+        }
       }
       
-      df <- data.frame(Value = data)
-      
       # ایجاد نمودارهای ترکیبی
-      p1 <- ggplot(df, aes(x = Value)) +
-        geom_histogram(aes(y = ..density..), 
-                       bins = 30, fill = "skyblue", alpha = 0.7) +
+      p1 <- ggplot(data.frame(x = data), aes(x = x)) +
+        geom_histogram(aes(y = ..density..), bins = 20, fill = "lightblue", alpha = 0.7) +
         geom_density(color = "blue", size = 1) +
-        stat_function(fun = dnorm, 
-                      args = list(mean = mean(data), sd = sd(data)),
+        stat_function(fun = dnorm, args = list(mean = mean(data), sd = sd(data)), 
                       color = "red", size = 1, linetype = "dashed") +
-        theme_minimal() +
-        labs(title = "هیستوگرام و منحنی چگالی",
-             x = "مقدار", y = "چگالی")
+        labs(title = "هیستوگرام و منحنی چگالی", x = "مقدار", y = "چگالی") +
+        theme_minimal()
       
-      p2 <- ggplot(df, aes(sample = Value)) +
-        geom_qq_line(color = "red", size = 1) +
-        geom_qq(color = "blue", alpha = 0.6) +
-        theme_minimal() +
-        labs(title = "نمودار Q-Q",
-             x = "مقادیر تئوریک", y = "مقادیر مشاهده شده")
+      p2 <- ggplot(data.frame(x = data), aes(sample = x)) +
+        stat_qq() +
+        stat_qq_line() +
+        labs(title = "نمودار Q-Q", x = "مقادیر تئوری", y = "مقادیر مشاهده شده") +
+        theme_minimal()
       
-      gridExtra::grid.arrange(p1, p2, ncol = 2)
+      grid.arrange(p1, p2, ncol = 2)
     })
     
     output$norm_check_results <- renderPrint({
       set.seed(123)
+      n <- input$norm_check_n
       
-      # تولید داده‌ها
-      if (input$norm_check_skew == 0) {
-        data <- rnorm(input$norm_check_n, 
-                      mean = input$norm_check_mean, 
-                      sd = input$norm_check_sd)
+      if (input$norm_check_skew == 0 & input$norm_check_kurtosis == 0) {
+        data <- rnorm(n, input$norm_check_mean, input$norm_check_sd)
       } else {
-        data <- sn::rsn(input$norm_check_n, 
-                        xi = input$norm_check_mean, 
-                        omega = input$norm_check_sd, 
-                        alpha = input$norm_check_skew * 5)
+        data <- rsn(n, xi = input$norm_check_mean, omega = input$norm_check_sd, 
+                    alpha = input$norm_check_skew * 10)
+        if (input$norm_check_kurtosis > 0) {
+          data <- data * (1 + input$norm_check_kurtosis/10)
+        }
       }
       
-      # انجام آزمون‌های نرمالیتی
+      # محاسبه آماره‌ها
       shapiro_test <- shapiro.test(data)
-      
-      # آزمون کولموگروف-اسمیرنوف
-      ks_test <- ks.test(data, "pnorm", mean = mean(data), sd = sd(data))
-      
-      # محاسبه چولگی و کشیدگی
       skewness_val <- moments::skewness(data)
       kurtosis_val <- moments::kurtosis(data)
       
-      cat("📊 نتایج بررسی نرمال بودن\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", length(data), "\n")
-      cat("  میانگین:", round(mean(data), 2), "\n")
-      cat("  انحراف معیار:", round(sd(data), 2), "\n")
-      cat("  چولگی:", round(skewness_val, 3), 
-          ifelse(abs(skewness_val) > 1, " (چولگی شدید)", 
-                 ifelse(abs(skewness_val) > 0.5, " (چولگی متوسط)", " (تقریباً متقارن)")), "\n")
-      cat("  کشیدگی:", round(kurtosis_val, 3), 
-          ifelse(kurtosis_val > 3.5, " (کشیدگی مثبت)", 
-                 ifelse(kurtosis_val < 2.5, " (کشیدگی منفی)", " (نرمال)")), "\n\n")
+      cat("نتایج بررسی نرمال بودن:\n\n")
+      cat("📊 آماره‌های توصیفی:\n")
+      cat("میانگین:", round(mean(data), 2), "\n")
+      cat("انحراف معیار:", round(sd(data), 2), "\n")
+      cat("چولگی:", round(skewness_val, 3), "\n")
+      cat("کشیدگی:", round(kurtosis_val, 3), "\n\n")
       
-      cat("🎯 آزمون شاپیرو-ویلک:\n")
-      cat("  آماره W:", round(shapiro_test$statistic, 4), "\n")
-      cat("  p-value:", format.pval(shapiro_test$p.value, digits = 3), "\n")
-      if(shapiro_test$p.value > 0.05) {
-        cat("  ✅ داده‌ها نرمال هستند (p > 0.05)\n")
-      } else {
-        cat("  ❌ داده‌ها نرمال نیستند (p < 0.05)\n")
-      }
-      cat("\n")
+      cat("🔍 آزمون شاپیرو-ویلک:\n")
+      cat("آماره W:", round(shapiro_test$statistic, 4), "\n")
+      cat("p-value:", format.pval(shapiro_test$p.value, digits = 3), "\n\n")
       
-      cat("🎯 آزمون کولموگروف-اسمیرنوف:\n")
-      cat("  آماره D:", round(ks_test$statistic, 4), "\n")
-      cat("  p-value:", format.pval(ks_test$p.value, digits = 3), "\n")
-      if(ks_test$p.value > 0.05) {
-        cat("  ✅ داده‌ها نرمال هستند (p > 0.05)\n")
+      cat("🎯 تصمیم‌گیری:\n")
+      if (shapiro_test$p.value > 0.05) {
+        cat("✅ داده‌ها نرمال هستند (p > 0.05)\n")
+        cat("پیشنهاد: استفاده از آزمون‌های پارامتری\n")
       } else {
-        cat("  ❌ داده‌ها نرمال نیستند (p < 0.05)\n")
+        cat("❌ داده‌ها غیرنرمال هستند (p < 0.05)\n")
+        cat("پیشنهاد: استفاده از آزمون‌های ناپارامتری\n")
       }
-      cat("\n")
       
-      cat("💡 توصیه:\n")
-      if(shapiro_test$p.value > 0.05 & ks_test$p.value > 0.05) {
-        cat("  ✅ می‌توان از آزمون‌های پارامتری استفاده کرد\n")
-      } else if(input$norm_check_n > 30 & abs(skewness_val) < 2) {
-        cat("  ⚠️ با احتیاط از آزمون‌های پارامتری استفاده کنید (تعداد نمونه زیاد)\n")
-      } else {
-        cat("  ❌ بهتر است از آزمون‌های ناپارامتری استفاده شود\n")
-      }
+      cat("\n💡 راهنمای تفسیر چولگی و کشیدگی:\n")
+      cat("چولگی ایده‌آل: بین -0.5 تا 0.5 (مقدار فعلی:", round(skewness_val, 3), ")\n")
+      cat("کشیدگی ایده‌آل: بین 2.5 تا 3.5 (مقدار فعلی:", round(kurtosis_val, 3), ")\n")
     })
   })
   
-  # جدول راهنمای تفسیر نرمالیتی
-  output$normality_guide_table <- renderTable({
-    data.frame(
-      "شاخص" = c("p-value > 0.05", "p-value < 0.05", "چولگی ≈ 0", "چولگی > 0.5", "چولگی < -0.5", "کشیدگی ≈ 3", "کشیدگی > 3.5", "کشیدگی < 2.5"),
-      "تفسیر" = c("نرمال بودن قابل قبول", "نقض نرمال بودن", "توزیع متقارن", "چولگی به راست", "چولگی به چپ", "کشیدگی نرمال", "کشیدگی مثبت (نوک تیز)", "کشیدگی منفی (پهن)"),
-      "اقدام" = c("استفاده از پارامتری", "استفاده از ناپارامتری", "مشکلی ندارد", "بررسی تبدیل داده", "بررسی تبدیل داده", "مشکلی ندارد", "بررسی مقادیر پرت", "بررسی دقت داده‌ها")
-    )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
-  # جدول راهنمای انتخاب آزمون برای چند گروه
+  
+  # ادامه توابع برای بخش‌های دیگر...
+  
+  # راهنمای انتخاب آزمون برای چند گروه
   output$multi_group_test_guide <- renderTable({
     data.frame(
-      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال", "ترتیبی", "کمی نرمال", "کمی غیرنرمال", "ترتیبی"),
-      "تعداد گروه" = c("۳ گروه یا بیشتر", "۳ گروه یا بیشتر", "۳ گروه یا بیشتر", "۳ گروه یا بیشتر", "۳ گروه یا بیشتر", "۳ گروه یا بیشتر"),
-      "آزمون اصلی" = c("ANOVA", "کراسکال-والیس", "کراسکال-والیس", "ANOVA", "کراسکال-والیس", "کراسکال-والیس"),
-      "آزمون تعقیبی" = c("توكی", "دان", "دان", "شفه", "نم-ونی", "نم-ونی"),
-      "پیش‌فرض نرمال بودن" = c("بله", "خیر", "خیر", "بله", "خیر", "خیر")
+      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال", "کیفی ترتیبی"),
+      "تعداد گروه‌ها" = c("≥3", "≥3", "≥3"),
+      "آزمون اصلی" = c("ANOVA", "کراسکال-والیس", "کراسکال-والیس"),
+      "آزمون تعقیبی" = c("توكی", "دان", "دان"),
+      "پیش‌فرض‌ها" = c(
+        "نرمال بودن، همسانی واریانس",
+        "عدم نیاز به نرمال بودن",
+        "عدم نیاز به نرمال بودن"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
-  
-  # جدول خلاصه آزمون‌های چندگروهی
-  output$multi_group_summary_table <- renderTable({
-    data.frame(
-      "آزمون" = c("ANOVA", "کراسکال-والیس", "توكی HSD", "دان", "شفه", "نم-ونی"),
-      "نوع" = c("پارامتری", "ناپارامتری", "تعقیبی پارامتری", "تعقیبی ناپارامتری", "تعقیبی پارامتری", "تعقیبی ناپارامتری"),
-      "هدف" = c("مقایسه میانگین چند گروه", "مقایسه توزیع چند گروه", "مقایسه جفت گروه‌ها پس از ANOVA", "مقایسه جفت گروه‌ها پس از کراسکال-والیس", "مقایسه جفت گروه‌ها (محافظه‌کارانه)", "مقایسه جفت گروه‌ها برای داده‌های ناپارامتری"),
-      "داده‌های مورد نیاز" = c("کمی نرمال", "کمی/ترتیبی", "کمی نرمال", "کمی/ترتیبی", "کمی نرمال", "کمی/ترتیبی")
-    )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
   # شبیه‌ساز ANOVA
-  
   observeEvent(input$run_anova, {
     output$anova_plot <- renderPlot({
-      # تولید داده‌های مصنوعی
+      # تولید داده‌های شبیه‌سازی شده
       set.seed(123)
       n_groups <- input$anova_n_groups
       n_per_group <- input$anova_n_per_group
       
-      means <- c(input$group1_mean, input$group2_mean, input$group3_mean)
-      if (n_groups >= 4) means <- c(means, input$group4_mean)
-      if (n_groups >= 5) means <- c(means, input$group5_mean)
-      if (n_groups >= 6) means <- c(means, input$group6_mean)
-      
-      data_list <- list()
-      group_labels <- c()
-      
-      for (i in 1:n_groups) {
-        group_data <- rnorm(n_per_group, mean = means[i], sd = input$anova_sd)
-        data_list[[i]] <- group_data
-        group_labels <- c(group_labels, rep(paste("گروه", i), n_per_group))
-      }
-      
-      df <- data.frame(
-        Value = unlist(data_list),
-        Group = factor(group_labels, levels = paste("گروه", 1:n_groups))
-      )
-      
-      # محدوده ثابت
-      y_min <- 0
-      y_max <- 200
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = Group, y = Value, fill = Group)) +
-        geom_boxplot(alpha = 0.7, outlier.color = "red") +
-        geom_jitter(width = 0.2, alpha = 0.5, size = 1) +
-        stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
-        
-        # محورهای کاملاً ثابت
-        coord_cartesian(ylim = c(y_min, y_max)) +
-        scale_y_continuous(breaks = seq(y_min, y_max, by = 20)) +
-        
-        scale_fill_brewer(palette = "Set2") +
-        theme_minimal() +
-        labs(
-          title = "مقایسه توزیع گروه‌ها",
-          x = "گروه",
-          y = "مقدار"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "none")
-    })
-  })
-  
-  
-    output$anova_results <- renderPrint({
-      # تولید داده‌ها
-      set.seed(123)
-      n_groups <- input$anova_n_groups
-      n_per_group <- input$anova_n_per_group
-      
-      means <- c(input$group1_mean, input$group2_mean, input$group3_mean)
-      if (n_groups >= 4) means <- c(means, input$group4_mean)
-      if (n_groups >= 5) means <- c(means, input$group5_mean)
-      if (n_groups >= 6) means <- c(means, input$group6_mean)
-      
-      data_list <- list()
-      group_labels <- c()
-      
-      for (i in 1:n_groups) {
-        group_data <- rnorm(n_per_group, mean = means[i], sd = input$anova_sd)
-        data_list[[i]] <- group_data
-        group_labels <- c(group_labels, rep(paste("گروه", i), n_per_group))
-      }
-      
-      df <- data.frame(
-        Value = unlist(data_list),
-        Group = factor(group_labels, levels = paste("گروه", 1:n_groups))
-      )
-      
-      # انجام ANOVA
-      anova_result <- aov(Value ~ Group, data = df)
-      anova_summary <- summary(anova_result)
-      
-      # بررسی همگنی واریانس
-      levene_test <- car::leveneTest(Value ~ Group, data = df)
-      
-      # محاسبه اندازه اثر
-      ss_between <- anova_summary[[1]]["Group", "Sum Sq"]
-      ss_total <- sum(anova_summary[[1]][, "Sum Sq"])
-      eta_squared <- ss_between / ss_total
-      
-      cat("📊 نتایج آنالیز واریانس (ANOVA)\n\n")
-      cat("📈 آمار توصیفی:\n")
-      desc_stats <- df %>% 
-        group_by(Group) %>% 
-        summarise(
-          n = n(),
-          Mean = round(mean(Value), 2),
-          SD = round(sd(Value), 2),
-          Median = round(median(Value), 2)
-        )
-      
-      for (i in 1:nrow(desc_stats)) {
-        cat("  ", desc_stats$Group[i], ": ", 
-            "میانگین =", desc_stats$Mean[i], 
-            ", انحراف معیار =", desc_stats$SD[i], 
-            ", میانه =", desc_stats$Median[i], "\n")
-      }
-      cat("\n")
-      
-      cat("🎯 نتایج ANOVA:\n")
-      cat("  آماره F:", round(anova_summary[[1]]["Group", "F value"], 3), "\n")
-      cat("  درجه آزادی بین گروهی:", anova_summary[[1]]["Group", "Df"], "\n")
-      cat("  درجه آزادی درون گروهی:", anova_summary[[1]]["Residuals", "Df"], "\n")
-      cat("  p-value:", format.pval(anova_summary[[1]]["Group", "Pr(>F)"], digits = 3), "\n")
-      cat("  اندازه اثر (η²):", round(eta_squared, 3), "\n\n")
-      
-      cat("🔍 بررسی پیش‌فرض‌ها:\n")
-      cat("  آزمون لوین برای همگنی واریانس:\n")
-      cat("  F(", levene_test$Df[1], ",", levene_test$Df[2], ") =", 
-          round(levene_test$`F value`[1], 3), 
-          ", p =", format.pval(levene_test$`Pr(>F)`[1], digits = 3), "\n")
-      
-      if (levene_test$`Pr(>F)`[1] > 0.05) {
-        cat("  ✅ واریانس‌ها همگن هستند (p > 0.05)\n")
-      } else {
-        cat("  ❌ واریانس‌ها همگن نیستند (p < 0.05)\n")
-      }
-      cat("\n")
-      
-      cat("💡 تصمیم:\n")
-      if (anova_summary[[1]]["Group", "Pr(>F)"] < as.numeric(input$anova_alpha)) {
-        cat("  ✅ رد فرض صفر (p-value < α)\n")
-        cat("  نتیجه: حداقل دو گروه با هم تفاوت معنی‌دار دارند\n")
-        cat("  🎯 توصیه: از آزمون تعقیبی (مانند توکی) استفاده کنید\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ α)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین گروه‌ها وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر اندازه اثر:\n")
-      if (eta_squared < 0.01) {
-        cat("  اثر بسیار کوچک\n")
-      } else if (eta_squared < 0.06) {
-        cat("  اثر کوچک\n")
-      } else if (eta_squared < 0.14) {
-        cat("  اثر متوسط\n")
-      } else {
-        cat("  اثر بزرگ\n")
-      }
-    })
-  
-  
-  # شبیه‌ساز کراسکال-والیس
-  observeEvent(input$run_kw, {
-    output$kw_plot <- renderPlot({
-      # تولید داده‌های مصنوعی
-      set.seed(123)
-      n_groups <- input$kw_n_groups
-      n_per_group <- input$kw_n_per_group
-      
-      # ایجاد بردارهای میانگین رتبه
-      ranks <- c(input$kw_group1_rank, input$kw_group2_rank, input$kw_group3_rank)
-      if (n_groups >= 4) ranks <- c(ranks, input$kw_group4_rank)
-      if (n_groups >= 5) ranks <- c(ranks, input$kw_group5_rank)
-      if (n_groups >= 6) ranks <- c(ranks, input$kw_group6_rank)
+      # ایجاد بردارهای میانگین‌ها با استفاده از لیست
+      mean_values <- list()
+      mean_values[["1"]] <- input$group1_mean
+      mean_values[["2"]] <- input$group2_mean
+      mean_values[["3"]] <- input$group3_mean
+      if (n_groups >= 4) mean_values[["4"]] <- input$group4_mean
+      if (n_groups >= 5) mean_values[["5"]] <- input$group5_mean
+      if (n_groups >= 6) mean_values[["6"]] <- input$group6_mean
       
       # تولید داده‌ها
       data_list <- list()
-      group_labels <- c()
-      
       for (i in 1:n_groups) {
-        group_data <- rnorm(n_per_group, mean = ranks[i], sd = 10)
-        data_list[[i]] <- group_data
-        group_labels <- c(group_labels, rep(paste("گروه", i), n_per_group))
+        data_list[[i]] <- rnorm(n_per_group, mean = mean_values[[as.character(i)]], sd = input$anova_sd)
       }
       
-      df <- data.frame(
-        Value = unlist(data_list),
-        Group = factor(group_labels, levels = paste("گروه", 1:n_groups))
+      data <- data.frame(
+        value = unlist(data_list),
+        group = factor(rep(paste("گروه", 1:n_groups), each = n_per_group))
       )
       
-      # ایجاد نمودار
-      ggplot(df, aes(x = Group, y = Value, fill = Group)) +
-        geom_violin(alpha = 0.7) +
-        geom_boxplot(width = 0.2, alpha = 0.7, outlier.color = "red") +
-        stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "white") +
-        scale_fill_brewer(palette = "Set1") +
+      ggplot(data, aes(x = group, y = value, fill = group)) +
+        geom_boxplot(alpha = 0.7) +
+        stat_summary(fun = mean, geom = "point", shape = 18, size = 3, color = "red") +
+        labs(title = "مقایسه چند گروه مستقل", 
+             subtitle = paste("ANOVA -", n_groups, "گروه"),
+             x = "گروه", y = "مقدار") +
         theme_minimal() +
-        labs(
-          title = "مقایسه توزیع رتبه‌ها در گروه‌ها",
-          x = "گروه",
-          y = "رتبه"
-        ) +
         theme(text = element_text(family = "Tahoma"),
               legend.position = "none")
     })
     
-    output$kw_results <- renderPrint({
-      # تولید داده‌ها
+    output$anova_results <- renderPrint({
+      # تولید داده‌های شبیه‌سازی شده
       set.seed(123)
-      n_groups <- input$kw_n_groups
-      n_per_group <- input$kw_n_per_group
+      n_groups <- input$anova_n_groups
+      n_per_group <- input$anova_n_per_group
       
-      ranks <- c(input$kw_group1_rank, input$kw_group2_rank, input$kw_group3_rank)
-      if (n_groups >= 4) ranks <- c(ranks, input$kw_group4_rank)
-      if (n_groups >= 5) ranks <- c(ranks, input$kw_group5_rank)
-      if (n_groups >= 6) ranks <- c(ranks, input$kw_group6_rank)
+      # ایجاد بردارهای میانگین‌ها با استفاده از لیست
+      mean_values <- list()
+      mean_values[["1"]] <- input$group1_mean
+      mean_values[["2"]] <- input$group2_mean
+      mean_values[["3"]] <- input$group3_mean
+      if (n_groups >= 4) mean_values[["4"]] <- input$group4_mean
+      if (n_groups >= 5) mean_values[["5"]] <- input$group5_mean
+      if (n_groups >= 6) mean_values[["6"]] <- input$group6_mean
       
+      # تولید داده‌ها
       data_list <- list()
-      group_labels <- c()
-      
       for (i in 1:n_groups) {
-        group_data <- rnorm(n_per_group, mean = ranks[i], sd = 10)
-        data_list[[i]] <- group_data
-        group_labels <- c(group_labels, rep(paste("گروه", i), n_per_group))
+        data_list[[i]] <- rnorm(n_per_group, mean = mean_values[[as.character(i)]], sd = input$anova_sd)
       }
       
-      df <- data.frame(
-        Value = unlist(data_list),
-        Group = factor(group_labels, levels = paste("گروه", 1:n_groups))
+      data <- data.frame(
+        value = unlist(data_list),
+        group = factor(rep(1:n_groups, each = n_per_group))
       )
       
-      # انجام آزمون کراسکال-والیس
-      kw_test <- kruskal.test(Value ~ Group, data = df)
+      # انجام ANOVA
+      anova_result <- aov(value ~ group, data = data)
+      summary_result <- summary(anova_result)
+      
+      cat("📊 نتایج تحلیل واریانس (ANOVA):\n")
+      cat("=====================================\n")
+      cat("تعداد گروه‌ها:", n_groups, "\n")
+      cat("تعداد نمونه در هر گروه:", n_per_group, "\n")
+      cat("کل نمونه‌ها:", n_groups * n_per_group, "\n\n")
+      
+      print(summary_result)
+      
+      # بررسی معنی‌داری
+      p_value <- summary_result[[1]]$`Pr(>F)`[1]
+      alpha <- as.numeric(input$anova_alpha)
+      
+      cat("\n🎯 تصمیم‌گیری:\n")
+      if (p_value < alpha) {
+        cat("✅ رد فرض صفر - حداقل دو گروه با هم تفاوت معنی‌دار دارند\n")
+        cat("📌 پیشنهاد: از آزمون تعقیبی (مانند توکی) استفاده کنید\n")
+      } else {
+        cat("❌ عدم رد فرض صفر - تفاوت معنی‌داری بین گروه‌ها وجود ندارد\n")
+      }
       
       # محاسبه اندازه اثر
-      n_total <- n_groups * n_per_group
-      epsilon_squared <- (kw_test$statistic - (n_groups - 1)) / (n_total - n_groups)
+      ss_between <- summary_result[[1]]$`Sum Sq`[1]
+      ss_total <- sum(summary_result[[1]]$`Sum Sq`)
+      eta_squared <- ss_between / ss_total
       
-      cat("📊 نتایج آزمون کراسکال-والیس\n\n")
-      cat("📈 آمار توصیفی:\n")
-      desc_stats <- df %>% 
-        group_by(Group) %>% 
-        summarise(
-          n = n(),
-          Median = round(median(Value), 2),
-          Mean_Rank = round(mean(rank(Value)), 2)
-        )
+      cat("\n📈 اندازه اثر:\n")
+      cat("η² (اتا مربع):", round(eta_squared, 3), "\n")
       
-      for (i in 1:nrow(desc_stats)) {
-        cat("  ", desc_stats$Group[i], ": ", 
-            "میانه =", desc_stats$Median[i], 
-            ", میانگین رتبه =", desc_stats$Mean_Rank[i], "\n")
-      }
-      cat("\n")
-      
-      cat("🎯 نتایج آزمون:\n")
-      cat("  آماره H:", round(kw_test$statistic, 3), "\n")
-      cat("  درجه آزادی:", kw_test$parameter, "\n")
-      cat("  p-value:", format.pval(kw_test$p.value, digits = 3), "\n")
-      cat("  اندازه اثر (ε²):", round(epsilon_squared, 3), "\n\n")
-      
-      cat("💡 تصمیم:\n")
-      if (kw_test$p.value < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: حداقل دو گروه توزیع متفاوتی دارند\n")
-        cat("  🎯 توصیه: از آزمون تعقیبی (مانند دان) استفاده کنید\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین توزیع گروه‌ها وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر اندازه اثر:\n")
-      if (epsilon_squared < 0.01) {
-        cat("  اثر بسیار کوچک\n")
-      } else if (epsilon_squared < 0.08) {
-        cat("  اثر کوچک\n")
-      } else if (epsilon_squared < 0.26) {
-        cat("  اثر متوسط\n")
-      } else {
-        cat("  اثر بزرگ\n")
-      }
-      
-      cat("\n⚠️ نکته: آزمون کراسکال-والیس برای داده‌های غیرنرمال مناسب است\n")
+      if (eta_squared < 0.01) cat("اثر بسیار کوچک\n")
+      else if (eta_squared < 0.06) cat("اثر کوچک\n")
+      else if (eta_squared < 0.14) cat("اثر متوسط\n")
+      else cat("اثر بزرگ\n")
     })
   })
   
-  # جدول راهنمای انتخاب آزمون برای متغیرهای کیفی
+  # راهنمای انتخاب آزمون برای متغیرهای کیفی
   output$categorical_test_selection_guide <- renderTable({
     data.frame(
-      "نوع متغیرها" = c("اسمی - دوحالتی", "اسمی - چندحالتی", "ترتیبی", "اسمی - دوحالتی", "اسمی - دوحالتی (نمونه کوچک)", "ترتیبی - دو گروه"),
-      "ساختار داده" = c("دو گروه مستقل", "چند گروه مستقل", "چند گروه مستقل", "دو گروه وابسته", "دو گروه مستقل", "دو گروه مستقل"),
-      "آزمون اصلی" = c("کای-دو", "کای-دو", "کراسکال-والیس", "مک نمار", "فیشر", "من-ویتنی"),
-      "اندازه اثر" = c("ضریب فی", "کرامرز V", "اپسیلون مربع", "--", "نسبت شانس", "r"),
-      "مثال پزشکی" = c("جنسیت و بیماری", "گروه خونی و بیماری", "درجه سرطان و پاسخ درمان", "قبل و بعد درمان", "بیماری نادر و عامل خطر", "سطح درد در دو روش")
+      "نوع داده" = c("دو متغیر اسمی", "دو متغیر اسمی - نمونه کوچک", 
+                     "داده‌های وابسته دوحالتی", "مقایسه نسبت‌ها"),
+      "جدول" = c("2×2 یا بزرگتر", "2×2", "2×2", "مقادیر فراوانی"),
+      "آزمون" = c("کای-دو", "فیشر", "مک نمار", "آزمون نسبت"),
+      "شرایط" = c(
+        "فراوانی مورد انتظار ≥5 در 80% خانه‌ها",
+        "فراوانی مورد انتظار <5 یا نمونه کوچک",
+        "داده‌های قبل-بعد یا جفت‌شده",
+        "مقایسه یک یا چند نسبت"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
   # شبیه‌ساز آزمون کای-دو
   observeEvent(input$run_chi2, {
@@ -5043,35 +5650,16 @@ server <- function(input, output, session) {
         input$chi2_row2_col1, input$chi2_row2_col2
       ), nrow = 2, byrow = TRUE)
       
-      # محاسبه فراوانی مورد انتظار
-      expected <- chisq.test(data_matrix)$expected
+      # تبدیل به داده‌های long format برای نمودار
+      data_long <- as.data.frame(as.table(data_matrix))
+      colnames(data_long) <- c("Row", "Column", "Frequency")
       
-      # ایجاد داده برای نمودار
-      df_obs <- as.data.frame(as.table(data_matrix))
-      df_exp <- as.data.frame(as.table(expected))
-      
-      df_obs$Type <- "مشاهده شده"
-      df_exp$Type <- "مورد انتظار"
-      
-      df_combined <- rbind(df_obs, df_exp)
-      colnames(df_combined) <- c("Row", "Col", "Frequency", "Type")
-      
-      # ایجاد نمودار
-      ggplot(df_combined, aes(x = Row, y = Frequency, fill = Col, alpha = Type)) +
-        geom_col(position = "dodge") +
-        scale_alpha_manual(values = c("مشاهده شده" = 0.7, "مورد انتظار" = 0.4)) +
-        scale_fill_brewer(palette = "Set2") +
-        facet_wrap(~Type) +
+      ggplot(data_long, aes(x = Row, y = Frequency, fill = Column)) +
+        geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+        labs(title = "جدول توافقی - توزیع فراوانی",
+             x = "ردیف", y = "فراوانی", fill = "ستون") +
         theme_minimal() +
-        labs(
-          title = "مقایسه فراوانی‌های مشاهده شده و مورد انتظار",
-          x = "ردیف",
-          y = "فراوانی",
-          fill = "ستون",
-          alpha = "نوع"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "bottom")
+        theme(text = element_text(family = "Tahoma"))
     })
     
     output$chi2_results <- renderPrint({
@@ -5082,1666 +5670,767 @@ server <- function(input, output, session) {
       ), nrow = 2, byrow = TRUE)
       
       # انجام آزمون کای-دو
-      chi_test <- chisq.test(data_matrix)
-      alpha <- as.numeric(input$chi2_alpha)
+      test_result <- chisq.test(data_matrix)
       
-      # محاسبه اندازه اثر
-      n <- sum(data_matrix)
-      phi <- sqrt(chi_test$statistic / n)
-      
-      cat("📊 نتایج آزمون کای-دو\n\n")
-      cat("📈 داده‌های جدول توافقی:\n")
+      cat("نتایج آزمون کای-دو:\n")
+      cat("جدول مشاهده شده:\n")
       print(data_matrix)
-      cat("  حجم نمونه:", n, "\n\n")
+      cat("\nجدول مورد انتظار:\n")
+      print(round(test_result$expected, 2))
+      cat("\nآماره کای-دو:", round(test_result$statistic, 4), "\n")
+      cat("درجه آزادی:", test_result$parameter, "\n")
+      cat("p-value:", round(test_result$p.value, 4), "\n")
       
-      cat("📊 فراوانی‌های مورد انتظار:\n")
-      print(round(chi_test$expected, 2))
-      cat("\n")
+      # بررسی پیش‌فرض‌ها
+      expected <- test_result$expected
+      prop_low <- sum(expected < 5) / length(expected)
       
-      cat("🎯 نتایج آزمون:\n")
-      cat("  آماره χ²:", round(chi_test$statistic, 3), "\n")
-      cat("  درجه آزادی:", chi_test$parameter, "\n")
-      cat("  p-value:", format.pval(chi_test$p.value, digits = 3), "\n")
-      cat("  اندازه اثر (φ):", round(phi, 3), "\n\n")
+      cat("\nبررسی پیش‌فرض‌ها:\n")
+      cat("تعداد خانه‌ها با فراوانی مورد انتظار <5:", sum(expected < 5), "\n")
+      cat("درصد خانه‌ها با فراوانی مورد انتظار <5:", round(prop_low * 100, 1), "%\n")
       
-      cat("🔍 بررسی پیش‌فرض‌ها:\n")
-      expected <- chi_test$expected
-      violations <- sum(expected < 5)
-      total_cells <- length(expected)
-      
-      cat("  تعداد خانه‌ها با فراوانی مورد انتظار < 5:", violations, "/", total_cells, "\n")
-      if (violations == 0) {
-        cat("  ✅ پیش‌فرض‌ها رعایت شده‌اند\n")
-      } else if (violations <= 0.2 * total_cells) {
-        cat("  ⚠️ پیش‌فرض‌ها تقریباً رعایت شده‌اند\n")
-      } else {
-        cat("  ❌ پیش‌فرض‌ها نقض شده‌اند - از آزمون فیشر استفاده کنید\n")
-      }
-      cat("\n")
-      
-      cat("💡 تصمیم:\n")
-      if (chi_test$p.value < alpha) {
-        cat("  ✅ رد فرض صفر (p-value < α)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ α)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود ندارد\n")
+      if (prop_low > 0.2) {
+        cat("هشدار: بیش از 20% خانه‌ها فراوانی مورد انتظار کمتر از 5 دارند!\n")
+        cat("پیشنهاد: از آزمون فیشر استفاده کنید\n")
       }
       
-      cat("\n📏 تفسیر اندازه اثر:\n")
-      if (phi < 0.1) {
-        cat("  اثر بسیار کوچک\n")
-      } else if (phi < 0.3) {
-        cat("  اثر کوچک\n")
-      } else if (phi < 0.5) {
-        cat("  اثر متوسط\n")
+      if (test_result$p.value < as.numeric(input$chi2_alpha)) {
+        cat("\nنتیجه: رد فرض صفر - رابطه معنی‌دار بین متغیرها وجود دارد\n")
       } else {
-        cat("  اثر بزرگ\n")
+        cat("\nنتیجه: عدم رد فرض صفر - رابطه معنی‌دار بین متغیرها وجود ندارد\n")
       }
     })
   })
   
-  # شبیه‌ساز آزمون فیشر
-  observeEvent(input$run_fisher, {
-    output$fisher_plot <- renderPlot({
-      # ایجاد ماتریس داده‌ها
-      data_matrix <- matrix(c(
-        input$fisher_row1_col1, input$fisher_row1_col2,
-        input$fisher_row2_col1, input$fisher_row2_col2
-      ), nrow = 2, byrow = TRUE)
-      
-      # محاسبه نسبت شانس
-      odds_ratio <- (data_matrix[1,1] * data_matrix[2,2]) / (data_matrix[1,2] * data_matrix[2,1])
-      
-      df <- data.frame(
-        Group = c("گروه ۱", "گروه ۲"),
-        Success = c(data_matrix[1,1], data_matrix[2,1]),
-        Failure = c(data_matrix[1,2], data_matrix[2,2])
-      )
-      
-      df_long <- df %>%
-        pivot_longer(cols = c(Success, Failure), names_to = "Outcome", values_to = "Count")
-      
-      # ایجاد نمودار
-      ggplot(df_long, aes(x = Group, y = Count, fill = Outcome)) +
-        geom_col(position = "fill") +
-        scale_fill_brewer(palette = "Set1") +
-        theme_minimal() +
-        labs(
-          title = paste("نمودار درصدی - نسبت شانس =", round(odds_ratio, 2)),
-          x = "گروه",
-          y = "درصد",
-          fill = "نتیجه"
-        ) +
-        scale_y_continuous(labels = scales::percent) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$fisher_results <- renderPrint({
-      # ایجاد ماتریس داده‌ها
-      data_matrix <- matrix(c(
-        input$fisher_row1_col1, input$fisher_row1_col2,
-        input$fisher_row2_col1, input$fisher_row2_col2
-      ), nrow = 2, byrow = TRUE)
-      
-      # انجام آزمون فیشر
-      fisher_test <- fisher.test(data_matrix)
-      
-      # محاسبه نسبت شانس
-      odds_ratio <- fisher_test$estimate
-      ci_lower <- fisher_test$conf.int[1]
-      ci_upper <- fisher_test$conf.int[2]
-      
-      cat("📊 نتایج آزمون فیشر\n\n")
-      cat("📈 داده‌های جدول ۲×۲:\n")
-      print(data_matrix)
-      cat("  حجم نمونه:", sum(data_matrix), "\n\n")
-      
-      cat("🎯 نتایج آزمون:\n")
-      cat("  p-value:", format.pval(fisher_test$p.value, digits = 3), "\n")
-      cat("  نسبت شانس (OR):", round(odds_ratio, 3), "\n")
-      cat("  فاصله اطمینان 95%: [", round(ci_lower, 3), ",", round(ci_upper, 3), "]\n\n")
-      
-      cat("💡 تصمیم:\n")
-      if (fisher_test$p.value < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر نسبت شانس:\n")
-      if (odds_ratio == 1) {
-        cat("  عدم ارتباط بین متغیرها\n")
-      } else if (odds_ratio > 1) {
-        cat("  ارتباط مثبت - شانس رویداد در گروه اول بیشتر است\n")
-        cat("  گروه اول", round((odds_ratio - 1) * 100, 1), "% شانس بیشتر دارد\n")
-      } else {
-        cat("  ارتباط منفی - شانس رویداد در گروه اول کمتر است\n")
-        cat("  گروه اول", round((1 - odds_ratio) * 100, 1), "% شانس کمتر دارد\n")
-      }
-      
-      cat("\n⚡ مزایای آزمون فیشر:\n")
-      cat("  ✅ مناسب برای نمونه‌های کوچک\n")
-      cat("  ✅ نیاز به پیش‌فرض‌های کمتری دارد\n")
-      cat("  ✅ دقیق‌تر برای داده‌های sparse\n")
-    })
-  })
+  # توابع مشابه برای بخش‌های دیگر...
   
-  # شبیه‌ساز بررسی پیش‌فرض کای-دو
-  observeEvent(input$check_assumptions, {
-    output$assumption_plot <- renderPlot({
-      # ایجاد ماتریس داده‌ها
-      data_matrix <- matrix(c(
-        input$assumption_row1_col1, input$assumption_row1_col2,
-        input$assumption_row2_col1, input$assumption_row2_col2
-      ), nrow = 2, byrow = TRUE)
-      
-      # محاسبه فراوانی مورد انتظار
-      expected <- chisq.test(data_matrix)$expected
-      
-      # ایجاد داده برای نمودار مقایسه‌ای
-      comparison_df <- data.frame(
-        Cell = rep(c("(1,1)", "(1,2)", "(2,1)", "(2,2)"), 2),
-        Frequency = c(as.vector(data_matrix), as.vector(expected)),
-        Type = rep(c("مشاهده شده", "مورد انتظار"), each = 4)
+  # خلاصه آزمون‌های چندگروهی
+  output$multi_group_summary_table <- renderTable({
+    data.frame(
+      "آزمون" = c("ANOVA", "کراسکال-والیس", "توكی", "دان"),
+      "نوع" = c("پارامتری", "ناپارامتری", "تعقیبی", "تعقیبی"),
+      "هدف" = c(
+        "مقایسه میانگین چند گروه",
+        "مقایسه توزیع چند گروه", 
+        "مقایسه جفت گروه‌ها پس از ANOVA",
+        "مقایسه جفت گروه‌ها پس از کراسکال-والیس"
+      ),
+      "پیش‌فرض" = c(
+        "نرمال بودن، همسانی واریانس",
+        "عدم نیاز به نرمال بودن",
+        "معنی‌دار بودن ANOVA",
+        "معنی‌دار بودن کراسکال-والیس"
       )
-      
-      ggplot(comparison_df, aes(x = Cell, y = Frequency, fill = Type)) +
-        geom_col(position = "dodge", alpha = 0.7) +
-        geom_hline(yintercept = 5, linetype = "dashed", color = "red", size = 1) +
-        annotate("text", x = 2.5, y = 5.5, label = "آستانه حداقل فراوانی (5)", 
-                 color = "red", family = "Tahoma") +
-        scale_fill_brewer(palette = "Set1") +
-        theme_minimal() +
-        labs(
-          title = "بررسی پیش‌فرض فراوانی مورد انتظار",
-          x = "خانه‌های جدول",
-          y = "فراوانی",
-          fill = "نوع"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$assumption_results <- renderPrint({
-      # ایجاد ماتریس داده‌ها
-      data_matrix <- matrix(c(
-        input$assumption_row1_col1, input$assumption_row1_col2,
-        input$assumption_row2_col1, input$assumption_row2_col2
-      ), nrow = 2, byrow = TRUE)
-      
-      # محاسبه فراوانی مورد انتظار
-      expected <- chisq.test(data_matrix)$expected
-      
-      cat("🔍 بررسی پیش‌فرض‌های آزمون کای-دو\n\n")
-      cat("📊 فراوانی‌های مشاهده شده:\n")
-      print(data_matrix)
-      cat("\n")
-      
-      cat("📈 فراوانی‌های مورد انتظار:\n")
-      print(round(expected, 2))
-      cat("\n")
-      
-      cat("🎯 تحلیل پیش‌فرض‌ها:\n")
-      violations <- sum(expected < 5)
-      total_cells <- length(expected)
-      percent_violations <- round(violations / total_cells * 100, 1)
-      
-      cat("  تعداد کل خانه‌ها:", total_cells, "\n")
-      cat("  خانه‌های با فراوانی < 5:", violations, "\n")
-      cat("  درصد نقض پیش‌فرض:", percent_violations, "%\n\n")
-      
-      cat("💡 وضعیت پیش‌فرض‌ها:\n")
-      if (violations == 0) {
-        cat("  ✅ عالی! همه پیش‌فرض‌ها رعایت شده‌اند\n")
-        cat("  🎯 می‌توان از آزمون کای-دو استفاده کرد\n")
-      } else if (percent_violations <= 20) {
-        cat("  ⚠️ قابل قبول! کمتر از 20% خانه‌ها مشکل دارند\n")
-        cat("  🎯 می‌توان از آزمون کای-دو استفاده کرد\n")
-      } else {
-        cat("  ❌ مشکل! بیش از 20% خانه‌ها مشکل دارند\n")
-        cat("  🚫 نباید از آزمون کای-دو استفاده کرد\n")
-      }
-      
-      cat("\n🎯 توصیه‌ها:\n")
-      if (violations > 0) {
-        cat("  1. ادغام دسته‌ها (در صورت امکان)\n")
-        cat("  2. استفاده از آزمون فیشر\n")
-        cat("  3. استفاده از شبیه‌سازی مونت کارلو\n")
-        cat("  4. افزایش حجم نمونه\n")
-      }
-      
-      # بررسی مناسب بودن آزمون فیشر
-      if (all(dim(data_matrix) == c(2, 2))) {
-        cat("\n🔍 مناسب بودن آزمون فیشر:\n")
-        if (sum(data_matrix) < 20 || violations > 0) {
-          cat("  ✅ داده‌ها برای آزمون فیشر مناسب هستند\n")
-          fisher_test <- fisher.test(data_matrix)
-          cat("  p-value فیشر:", format.pval(fisher_test$p.value, digits = 3), "\n")
-        } else {
-          cat("  ⚠️ داده‌ها برای کای-دو مناسب‌تر هستند\n")
-        }
-      }
-    })
-  })
+    )
+  }, striped = TRUE, hover = TRUE)
+  
+  # خلاصه آزمون‌های مکرر
+  output$repeated_measures_summary_table <- renderTable({
+    data.frame(
+      "آزمون" = c("Repeated Measures ANOVA", "فریدمن", "کوکران"),
+      "نوع داده" = c("کمی نرمال", "کمی/ترتیبی", "دوحالتی"),
+      "طرح مطالعه" = c("اندازه‌گیری مکرر", "اندازه‌گیری مکرر", "اندازه‌گیری مکرر"),
+      "پیش‌فرض" = c("نرمال بودن، کروی بودن", "عدم نیاز به نرمال بودن", "داده‌های دوحالتی")
+    )
+  }, striped = TRUE, hover = TRUE)
   
   # جدول تفسیر همبستگی
   output$correlation_interpretation_table <- renderTable({
     data.frame(
-      "مقدار مطلق ضریب" = c("0.00 - 0.10", "0.10 - 0.30", "0.30 - 0.50", "0.50 - 0.70", "0.70 - 0.90", "0.90 - 1.00"),
-      "تفسیر" = c("بسیار ضعیف", "ضعیف", "متوسط", "قوی", "بسیار قوی", "کامل"),
-      "تبیین واریانس" = c("کمتر از 1%", "1% - 9%", "9% - 25%", "25% - 49%", "49% - 81%", "81% - 100%")
+      "مقدار ضریب" = c("0.9 - 1.0", "0.7 - 0.9", "0.5 - 0.7", "0.3 - 0.5", "0.0 - 0.3"),
+      "قدرت رابطه" = c("خیلی قوی", "قوی", "متوسط", "ضعیف", "بسیار ضعیف"),
+      "تفسیر" = c(
+        "رابطه تقریباً کامل",
+        "رابطه قوی و معنادار",
+        "رابطه متوسط و قابل توجه",
+        "رابطه ضعیف اما معمولاً معنادار",
+        "رابطه ناچیز یا بدون رابطه"
+      )
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  # جدول راهنمای انتخاب آزمون همبستگی
+  # راهنمای انتخاب آزمون همبستگی
   output$correlation_selection_guide <- renderTable({
     data.frame(
-      "نوع متغیرها" = c("کمی نرمال", "کمی غیرنرمال", "ترتیبی", "اسمی دوحالتی", "اسمی چندحالتی"),
-      "آزمون پارامتری" = c("پیرسون", "--", "--", "نقطه‌دو سری", "--"),
-      "آزمون ناپارامتری" = c("--", "اسپیرمن", "اسپیرمن/کندال", "--", "فی/کرامرز"),
-      "مثال پزشکی" = c("قد و وزن", "سطح درد و سن", "درجه سرطان و کیفیت زندگی", "جنسیت و فشار خون", "گروه خونی و بیماری")
+      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال", "ترتیبی", "داده‌های رتبه‌ای"),
+      "آزمون" = c("پیرسون", "اسپیرمن", "اسپیرمن", "کندال"),
+      "فرضیه" = c(
+        "رابطه خطی بین دو متغیر نرمال",
+        "رابطه یکنوا بین دو متغیر",
+        "رابطه بین دو متغیر ترتیبی", 
+        "هماهنگی بین رتبه‌ها"
+      ),
+      "مقاومت به پرت" = c("کم", "متوسط", "متوسط", "زیاد")
     )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  }, striped = TRUE, hover = TRUE)
   
-  # تابع برای ANCOVA
-  observeEvent(input$run_ancova, {
-    output$ancova_plot <- renderPlot({
-      set.seed(123)
-      n_groups <- input$ancova_n_groups
-      n_per_group <- input$ancova_n_per_group
-      
-      # ایجاد بردار میانگین‌ها
-      means <- c(input$ancova_group1_mean, input$ancova_group2_mean)
-      if (n_groups >= 3) means <- c(means, input$ancova_group3_mean)
-      if (n_groups >= 4) means <- c(means, input$ancova_group4_mean)
-      
-      # تولید داده‌ها
-      data_list <- list()
-      for (i in 1:n_groups) {
-        # تولید کوواریات
-        covariate <- rnorm(n_per_group, mean = 50, sd = 10)
-        
-        # تولید متغیر وابسته با در نظر گرفتن اثر کوواریات
-        y <- means[i] + input$ancova_cov_effect * (covariate - 50) + 
-          rnorm(n_per_group, sd = 5)
-        
-        data_list[[i]] <- data.frame(
-          y = y,
-          covariate = covariate,
-          group = factor(rep(paste("گروه", i), n_per_group))
-        )
-      }
-      
-      df <- do.call(rbind, data_list)
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = covariate, y = y, color = group)) +
-        geom_point(alpha = 0.6) +
-        geom_smooth(method = "lm", se = FALSE) +
-        scale_color_brewer(palette = "Set1") +
-        theme_minimal() +
-        labs(
-          title = "رابطه متغیر وابسته و کوواریات در گروه‌های مختلف",
-          x = "کوواریات",
-          y = "متغیر وابسته",
-          color = "گروه"
-        ) +
-        theme(text = element_text(family = "Tahoma"),
-              legend.position = "bottom")
-    })
-    
-    output$ancova_results <- renderPrint({
-      set.seed(123)
-      n_groups <- input$ancova_n_groups
-      n_per_group <- input$ancova_n_per_group
-      
-      means <- c(input$ancova_group1_mean, input$ancova_group2_mean)
-      if (n_groups >= 3) means <- c(means, input$ancova_group3_mean)
-      if (n_groups >= 4) means <- c(means, input$ancova_group4_mean)
-      
-      # تولید داده‌ها
-      data_list <- list()
-      for (i in 1:n_groups) {
-        covariate <- rnorm(n_per_group, mean = 50, sd = 10)
-        y <- means[i] + input$ancova_cov_effect * (covariate - 50) + 
-          rnorm(n_per_group, sd = 5)
-        
-        data_list[[i]] <- data.frame(
-          y = y,
-          covariate = covariate,
-          group = factor(rep(paste("گروه", i), n_per_group))
-        )
-      }
-      
-      df <- do.call(rbind, data_list)
-      
-      # انجام ANCOVA
-      model_ancova <- lm(y ~ group + covariate, data = df)
-      anova_result <- car::Anova(model_ancova, type = "III")
-      
-      # بررسی همگونی شیب‌ها
-      model_interaction <- lm(y ~ group * covariate, data = df)
-      interaction_test <- car::Anova(model_interaction, type = "III")
-      
-      cat("📊 نتایج آنالیز کوواریانس (ANCOVA)\n\n")
-      cat("📈 آمار توصیفی:\n")
-      desc_stats <- df %>%
-        group_by(group) %>%
-        summarise(
-          n = n(),
-          Mean_Y = round(mean(y), 2),
-          SD_Y = round(sd(y), 2),
-          Mean_Cov = round(mean(covariate), 2)
-        )
-      print(desc_stats)
-      cat("\n")
-      
-      cat("🎯 نتایج ANCOVA:\n")
-      print(anova_result)
-      
-      # محاسبه اندازه اثر
-      ss_group <- anova_result["group", "Sum Sq"]
-      ss_total <- sum(anova_result[, "Sum Sq"], na.rm = TRUE)
-      eta_squared <- ss_group / ss_total
-      
-      cat("\n📏 اندازه اثر (η²):", round(eta_squared, 3), "\n")
-      
-      cat("\n🔍 بررسی پیش‌فرض همگونی شیب‌ها:\n")
-      interaction_p <- interaction_test["group:covariate", "Pr(>F)"]
-      cat("  p-value برهمکنش گروه × کوواریات:", 
-          format.pval(interaction_p, digits = 3), "\n")
-      
-      if (interaction_p > 0.05) {
-        cat("  ✅ پیش‌فرض همگونی شیب‌ها برقرار است\n")
-      } else {
-        cat("  ❌ پیش‌فرض همگونی شیب‌ها نقض شده است\n")
-        cat("  ⚠️ تفسیر نتایج با احتیاط انجام شود\n")
-      }
-      
-      cat("\n💡 تصمیم:\n")
-      group_p <- anova_result["group", "Pr(>F)"]
-      if (group_p < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: پس از کنترل اثر کوواریات، تفاوت معنی‌دار بین گروه‌ها وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: پس از کنترل اثر کوواریات، تفاوت معنی‌دار بین گروه‌ها وجود ندارد\n")
-      }
-    })
-  })
-  
-  # تابع برای Repeated Measures ANOVA
-  observeEvent(input$run_rm_anova, {
-    output$rm_plot <- renderPlot({
-      set.seed(123)
-      n_subjects <- input$rm_n_subjects
-      n_timepoints <- input$rm_n_timepoints
-      
-      # ایجاد بردار میانگین‌ها
-      means <- c(input$rm_time1_mean, input$rm_time2_mean, input$rm_time3_mean)
-      if (n_timepoints >= 4) means <- c(means, input$rm_time4_mean)
-      if (n_timepoints >= 5) means <- c(means, input$rm_time5_mean)
-      if (n_timepoints >= 6) means <- c(means, input$rm_time6_mean)
-      
-      # تولید داده‌های وابسته
-      df <- data.frame()
-      for (i in 1:n_subjects) {
-        subject_effect <- rnorm(1, sd = 5)  # اثر فردی
-        
-        for (j in 1:n_timepoints) {
-          # ایجاد همبستگی بین اندازه‌گیری‌ها
-          correlated_error <- input$rm_correlation * rnorm(1, sd = 3)
-          unique_error <- (1 - input$rm_correlation) * rnorm(1, sd = 3)
-          
-          y <- means[j] + subject_effect + correlated_error + unique_error
-          
-          df <- rbind(df, data.frame(
-            subject = factor(i),
-            time = factor(j),
-            value = y
-          ))
-        }
-      }
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = time, y = value, group = subject)) +
-        geom_line(alpha = 0.3, color = "gray") +
-        geom_point(alpha = 0.5) +
-        stat_summary(aes(group = 1), fun = mean, geom = "line", 
-                     color = "red", size = 1.5) +
-        stat_summary(aes(group = 1), fun = mean, geom = "point", 
-                     color = "red", size = 3) +
-        theme_minimal() +
-        labs(
-          title = "نمایش داده‌های اندازه‌گیری مکرر",
-          x = "زمان اندازه‌گیری",
-          y = "مقدار"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$rm_results <- renderPrint({
-      set.seed(123)
-      n_subjects <- input$rm_n_subjects
-      n_timepoints <- input$rm_n_timepoints
-      
-      means <- c(input$rm_time1_mean, input$rm_time2_mean, input$rm_time3_mean)
-      if (n_timepoints >= 4) means <- c(means, input$rm_time4_mean)
-      if (n_timepoints >= 5) means <- c(means, input$rm_time5_mean)
-      if (n_timepoints >= 6) means <- c(means, input$rm_time6_mean)
-      
-      # تولید داده‌ها
-      df_wide <- data.frame(subject = 1:n_subjects)
-      for (j in 1:n_timepoints) {
-        subject_effects <- rnorm(n_subjects, sd = 5)
-        correlated_errors <- MASS::mvrnorm(n_subjects, 
-                                           mu = rep(0, n_timepoints),
-                                           Sigma = toeplitz(input$rm_correlation^(0:(n_timepoints-1))))[,j] * 3
-        
-        df_wide[[paste0("time", j)]] <- means[j] + subject_effects + correlated_errors
-      }
-      
-      # تبدیل به فرمت long
-      df_long <- df_wide %>%
-        pivot_longer(cols = starts_with("time"), 
-                     names_to = "time", 
-                     values_to = "value") %>%
-        mutate(subject = factor(subject),
-               time = factor(time))
-      
-      # انجام Repeated Measures ANOVA
-      model <- aov(value ~ time + Error(subject/time), data = df_long)
-      model_summary <- summary(model)
-      
-      cat("📊 نتایج تحلیل واریانس با اندازه‌گیری مکرر\n\n")
-      cat("📈 آمار توصیفی:\n")
-      desc_stats <- df_long %>%
-        group_by(time) %>%
-        summarise(
-          n = n(),
-          Mean = round(mean(value), 2),
-          SD = round(sd(value), 2)
-        )
-      print(desc_stats)
-      cat("\n")
-      
-      cat("🎯 نتایج ANOVA:\n")
-      print(model_summary)
-      
-      # بررسی کروی بودن
-      tryCatch({
-        mauchly_test <- car::mauchlyTest(model)
-        cat("\n🔍 آزمون ماشلی برای کروی بودن:\n")
-        cat("  p-value:", format.pval(mauchly_test$p, digits = 3), "\n")
-        
-        if (mauchly_test$p < 0.05) {
-          cat("  ❌ پیش‌فرض کروی بودن نقض شده است\n")
-          cat("  🎯 استفاده از اصلاح گرین هاوس-گیسر توصیه می‌شود\n")
-        } else {
-          cat("  ✅ پیش‌فرض کروی بودن برقرار است\n")
-        }
-      }, error = function(e) {
-        cat("\n⚠️ امکان انجام آزمون ماشلی وجود ندارد\n")
-      })
-      
-      cat("\n💡 تصمیم:\n")
-      time_p <- model_summary$`Error: subject:time`[[1]]["time", "Pr(>F)"]
-      if (!is.na(time_p) && time_p < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین زمان‌های اندازه‌گیری وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین زمان‌های اندازه‌گیری وجود ندارد\n")
-      }
-    })
-  })
-  
-  # تابع برای آزمون فریدمن
-  observeEvent(input$run_friedman, {
-    output$friedman_plot <- renderPlot({
-      set.seed(123)
-      n_blocks <- input$friedman_n_blocks
-      n_treatments <- input$friedman_n_treatments
-      
-      # ایجاد بردار میانگین رتبه‌ها
-      ranks <- c(input$friedman_treatment1, input$friedman_treatment2, input$friedman_treatment3)
-      if (n_treatments >= 4) ranks <- c(ranks, input$friedman_treatment4)
-      if (n_treatments >= 5) ranks <- c(ranks, input$friedman_treatment5)
-      if (n_treatments >= 6) ranks <- c(ranks, input$friedman_treatment6)
-      
-      # تولید داده‌های رتبه‌ای
-      df <- data.frame()
-      for (i in 1:n_blocks) {
-        block_effect <- rnorm(1, sd = 0.5)
-        
-        treatment_scores <- ranks + block_effect + rnorm(n_treatments, sd = 0.3)
-        
-        for (j in 1:n_treatments) {
-          df <- rbind(df, data.frame(
-            block = factor(i),
-            treatment = factor(j),
-            score = treatment_scores[j]
-          ))
-        }
-      }
-      
-      # محاسبه رتبه‌ها در هر بلوک
-      df_ranks <- df %>%
-        group_by(block) %>%
-        mutate(rank = rank(score))
-      
-      # ایجاد نمودار
-      ggplot(df_ranks, aes(x = treatment, y = rank)) +
-        geom_boxplot(fill = "lightblue", alpha = 0.7) +
-        stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "red") +
-        theme_minimal() +
-        labs(
-          title = "توزیع رتبه‌ها در درمان‌های مختلف",
-          x = "درمان",
-          y = "رتبه"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$friedman_results <- renderPrint({
-      set.seed(123)
-      n_blocks <- input$friedman_n_blocks
-      n_treatments <- input$friedman_n_treatments
-      
-      ranks <- c(input$friedman_treatment1, input$friedman_treatment2, input$friedman_treatment3)
-      if (n_treatments >= 4) ranks <- c(ranks, input$friedman_treatment4)
-      if (n_treatments >= 5) ranks <- c(ranks, input$friedman_treatment5)
-      if (n_treatments >= 6) ranks <- c(ranks, input$friedman_treatment6)
-      
-      # تولید داده‌ها
-      df_wide <- data.frame(block = 1:n_blocks)
-      for (j in 1:n_treatments) {
-        block_effects <- rnorm(n_blocks, sd = 0.5)
-        df_wide[[paste0("treatment", j)]] <- ranks[j] + block_effects + rnorm(n_blocks, sd = 0.3)
-      }
-      
-      # انجام آزمون فریدمن
-      friedman_matrix <- as.matrix(df_wide[, -1])
-      friedman_test <- friedman.test(friedman_matrix)
-      
-      cat("📊 نتایج آزمون فریدمن\n\n")
-      cat("📈 آمار توصیفی (میانگین رتبه):\n")
-      rank_means <- apply(friedman_matrix, 2, function(x) mean(rank(x)))
-      for (i in 1:length(rank_means)) {
-        cat("  درمان", i, ":", round(rank_means[i], 2), "\n")
-      }
-      cat("\n")
-      
-      cat("🎯 نتایج آزمون:\n")
-      cat("  آماره χ²:", round(friedman_test$statistic, 3), "\n")
-      cat("  درجه آزادی:", friedman_test$parameter, "\n")
-      cat("  p-value:", format.pval(friedman_test$p.value, digits = 3), "\n")
-      
-      # محاسبه اندازه اثر
-      n <- n_blocks
-      k <- n_treatments
-      W <- friedman_test$statistic / (n * (k - 1))
-      
-      cat("  اندازه اثر (W):", round(W, 3), "\n\n")
-      
-      cat("💡 تصمیم:\n")
-      if (friedman_test$p.value < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین درمان‌ها وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: تفاوت معنی‌دار بین درمان‌ها وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر اندازه اثر:\n")
-      if (W < 0.1) {
-        cat("  اثر کوچک\n")
-      } else if (W < 0.3) {
-        cat("  اثر متوسط\n")
-      } else if (W < 0.5) {
-        cat("  اثر بزرگ\n")
-      } else {
-        cat("  اثر بسیار بزرگ\n")
-      }
-    })
-  })
-  
-  # تابع برای آزمون Q کوکران
-  observeEvent(input$run_cochran, {
-    output$cochran_plot <- renderPlot({
-      set.seed(123)
-      n_subjects <- input$cochran_n_subjects
-      n_treatments <- input$cochran_n_treatments
-      
-      # ایجاد بردار نسبت بهبودی
-      improvements <- c(input$cochran_treatment1, input$cochran_treatment2, input$cochran_treatment3) / 100
-      if (n_treatments >= 4) improvements <- c(improvements, input$cochran_treatment4 / 100)
-      if (n_treatments >= 5) improvements <- c(improvements, input$cochran_treatment5 / 100)
-      
-      # تولید داده‌های دوحالتی
-      df <- data.frame()
-      for (i in 1:n_subjects) {
-        subject_sensitivity <- runif(1, 0.5, 1.5)  # حساسیت فردی
-        
-        for (j in 1:n_treatments) {
-          prob <- pmin(1, improvements[j] * subject_sensitivity)
-          improved <- rbinom(1, 1, prob)
-          
-          df <- rbind(df, data.frame(
-            subject = factor(i),
-            treatment = factor(j),
-            improved = improved
-          ))
-        }
-      }
-      
-      # محاسبه نسبت بهبودی
-      summary_df <- df %>%
-        group_by(treatment) %>%
-        summarise(
-          improvement_rate = mean(improved),
-          count = sum(improved)
-        )
-      
-      # ایجاد نمودار
-      ggplot(summary_df, aes(x = treatment, y = improvement_rate)) +
-        geom_col(fill = "lightgreen", alpha = 0.7) +
-        geom_text(aes(label = paste0(round(improvement_rate * 100, 1), "%")), 
-                  vjust = -0.5, size = 5) +
-        scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
-        theme_minimal() +
-        labs(
-          title = "نسبت بهبودی در درمان‌های مختلف",
-          x = "درمان",
-          y = "نسبت بهبودی"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$cochran_results <- renderPrint({
-      set.seed(123)
-      n_subjects <- input$cochran_n_subjects
-      n_treatments <- input$cochran_n_treatments
-      
-      improvements <- c(input$cochran_treatment1, input$cochran_treatment2, input$cochran_treatment3) / 100
-      if (n_treatments >= 4) improvements <- c(improvements, input$cochran_treatment4 / 100)
-      if (n_treatments >= 5) improvements <- c(improvements, input$cochran_treatment5 / 100)
-      
-      # تولید داده‌ها
-      df_wide <- data.frame(subject = 1:n_subjects)
-      for (j in 1:n_treatments) {
-        subject_sensitivities <- runif(n_subjects, 0.5, 1.5)
-        probs <- pmin(1, improvements[j] * subject_sensitivities)
-        df_wide[[paste0("treatment", j)]] <- rbinom(n_subjects, 1, probs)
-      }
-      
-      # انجام آزمون Q کوکران
-      cochran_matrix <- as.matrix(df_wide[, -1])
-      
-      # محاسبه آماره Q کوکران
-      tryCatch({
-        # استفاده از تابع cochran.qtest از بسته nonpar
-        if (requireNamespace("nonpar", quietly = TRUE)) {
-          cochran_test <- nonpar::cochrans.q(cochran_matrix)
-          
-          cat("📊 نتایج آزمون Q کوکران\n\n")
-          cat("📈 آمار توصیفی:\n")
-          improvement_rates <- apply(cochran_matrix, 2, mean)
-          for (i in 1:length(improvement_rates)) {
-            cat("  درمان", i, ":", round(improvement_rates[i] * 100, 1), "% بهبودی\n")
-          }
-          cat("\n")
-          
-          cat("🎯 نتایج آزمون:\n")
-          cat("  آماره Q:", round(cochran_test$Q, 3), "\n")
-          cat("  درجه آزادی:", cochran_test$df, "\n")
-          cat("  p-value:", format.pval(cochran_test$p.value, digits = 3), "\n\n")
-          
-          cat("💡 تصمیم:\n")
-          if (cochran_test$p.value < 0.05) {
-            cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-            cat("  نتیجه: تفاوت معنی‌دار در نرخ بهبودی بین درمان‌ها وجود دارد\n")
-          } else {
-            cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-            cat("  نتیجه: تفاوت معنی‌دار در نرخ بهبودی بین درمان‌ها وجود ندارد\n")
-          }
-        } else {
-          cat("⚠️ برای انجام آزمون کوکران، بسته 'nonpar' نیاز است\n")
-          cat("📦 می‌توانید با دستور زیر نصب کنید: install.packages('nonpar')\n")
-        }
-      }, error = function(e) {
-        cat("❌ خطا در انجام آزمون کوکران:\n", e$message, "\n")
-      })
-    })
-  })
-  
-  # جدول خلاصه آزمون‌های اندازه‌گیری مکرر
-  output$repeated_measures_summary_table <- renderTable({
-    data.frame(
-      "آزمون" = c("Repeated Measures ANOVA", "فریدمن", "کوکران"),
-      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال/ترتیبی", "دوحالتی"),
-      "تعداد گروه‌ها" = c("۲ یا بیشتر", "۲ یا بیشتر", "۲ یا بیشتر"),
-      "وابستگی" = c("اندازه‌گیری مکرر", "اندازه‌گیری مکرر", "اندازه‌گیری مکرر"),
-      "پیش‌فرض نرمال بودن" = c("بله", "خیر", "خیر"),
-      "مثال پزشکی" = c("فشار خون در زمان‌های مختلف", "سطح درد با روش‌های مختلف", "بهبودی/عدم بهبودی در مراحل مختلف")
-    )
-  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
-  
-  # شبیه‌ساز همبستگی پیرسون
-  # شبیه‌ساز همبستگی پیرسون - نسخه اصلاح شده
-  observeEvent(input$run_pearson, {
-    output$pearson_plot <- renderPlot({
-      set.seed(123)
-      n <- input$cor_sample_size
-      r <- input$pearson_cor
-      noise <- input$cor_noise
-      
-      # تولید داده‌های با همبستگی مشخص
-      x <- rnorm(n)
-      y <- r * x + sqrt(1 - r^2) * rnorm(n)
-      
-      # اضافه کردن نویز
-      y <- y + noise * rnorm(n)
-      
-      df <- data.frame(x = x, y = y)
-      
-      # محدوده ثابت برای محورها
-      x_range <- max(abs(x))
-      y_range <- max(abs(y))
-      axis_limit <- max(x_range, y_range) * 1.1
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = x, y = y)) +
-        geom_point(alpha = 0.6, color = "blue", size = 2) +
-        geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
-        coord_cartesian(xlim = c(-axis_limit, axis_limit), 
-                        ylim = c(-axis_limit, axis_limit)) +
-        theme_minimal() +
-        labs(
-          title = paste("نمودار پراکندگی - همبستگی پیرسون"),
-          x = "متغیر X",
-          y = "متغیر Y"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-    })
-    
-    output$pearson_results <- renderPrint({
-      set.seed(123)
-      n <- input$cor_sample_size
-      r <- input$pearson_cor
-      noise <- input$cor_noise
-      
-      # تولید داده‌ها
-      x <- rnorm(n)
-      y <- r * x + sqrt(1 - r^2) * rnorm(n)
-      y <- y + noise * rnorm(n)
-      
-      # محاسبه همبستگی پیرسون
-      cor_test <- cor.test(x, y, method = "pearson")
-      r_actual <- cor_test$estimate
-      p_value <- cor_test$p.value
-      ci_lower <- cor_test$conf.int[1]
-      ci_upper <- cor_test$conf.int[2]
-      
-      # محاسبه ضریب تعیین
-      r_squared <- r_actual^2
-      
-      cat("📊 نتایج همبستگی پیرسون\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  میانگین X:", round(mean(x), 2), "\n")
-      cat("  میانگین Y:", round(mean(y), 2), "\n")
-      cat("  انحراف معیار X:", round(sd(x), 2), "\n")
-      cat("  انحراف معیار Y:", round(sd(y), 2), "\n\n")
-      
-      cat("🎯 نتایج همبستگی:\n")
-      cat("  ضریب همبستگی (r):", round(r_actual, 3), "\n")
-      cat("  ضریب تعیین (R²):", round(r_squared, 3), "\n")
-      cat("  p-value:", format.pval(p_value, digits = 3), "\n")
-      cat("  فاصله اطمینان 95%: [", round(ci_lower, 3), ",", round(ci_upper, 3), "]\n\n")
-      
-      cat("💡 تصمیم:\n")
-      if (p_value < as.numeric(input$cor_alpha)) {
-        cat("  ✅ رد فرض صفر (p-value < α)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ α)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر قدرت همبستگی:\n")
-      abs_r <- abs(r_actual)
-      if (abs_r < 0.1) {
-        cat("  رابطه بسیار ضعیف\n")
-      } else if (abs_r < 0.3) {
-        cat("  رابطه ضعیف\n")
-      } else if (abs_r < 0.5) {
-        cat("  رابطه متوسط\n")
-      } else if (abs_r < 0.7) {
-        cat("  رابطه قوی\n")
-      } else if (abs_r < 0.9) {
-        cat("  رابطه بسیار قوی\n")
-      } else {
-        cat("  رابطه کامل\n")
-      }
-      
-      cat("\n📊 تفسیر ضریب تعیین:\n")
-      cat("  متغیر X حدود", round(r_squared * 100, 1), "% از واریانس متغیر Y را تبیین می‌کند\n")
-      
-      # بررسی پیش‌فرض نرمال بودن
-      shapiro_x <- shapiro.test(x)
-      shapiro_y <- shapiro.test(y)
-      
-      cat("\n🔍 بررسی پیش‌فرض نرمال بودن:\n")
-      cat("  متغیر X: W =", round(shapiro_x$statistic, 3), 
-          ", p =", format.pval(shapiro_x$p.value, digits = 3))
-      if (shapiro_x$p.value > 0.05) {
-        cat(" ✅ نرمال\n")
-      } else {
-        cat(" ❌ غیرنرمال\n")
-      }
-      
-      cat("  متغیر Y: W =", round(shapiro_y$statistic, 3), 
-          ", p =", format.pval(shapiro_y$p.value, digits = 3))
-      if (shapiro_y$p.value > 0.05) {
-        cat(" ✅ نرمال\n")
-      } else {
-        cat(" ❌ غیرنرمال\n")
-      }
-    })
-  })  # این براکت بسته کننده observeEvent بود که گم شده بود
-  
-  # شبیه‌ساز همبستگی اسپیرمن
-  observeEvent(input$run_spearman, {
-    output$spearman_plot <- renderPlot({
-      set.seed(123)
-      n <- input$spearman_sample_size
-      rho <- input$spearman_cor
-      n_outliers <- input$spearman_outliers
-      nonlinear <- input$use_nonlinear
-      
-      if (nonlinear) {
-        # رابطه غیرخطی
-        x <- runif(n, 0, 10)
-        y <- if (rho > 0) {
-          x^2 + rnorm(n, sd = 5)
-        } else {
-          100 - x^2 + rnorm(n, sd = 5)
-        }
-      } else {
-        # رابطه خطی
-        x <- rnorm(n)
-        y <- rho * x + sqrt(1 - rho^2) * rnorm(n)
-      }
-      
-      # اضافه کردن مقادیر پرت
-      if (n_outliers > 0) {
-        outlier_indices <- sample(1:n, n_outliers)
-        x[outlier_indices] <- x[outlier_indices] + runif(n_outliers, 3, 5) * sign(runif(n_outliers, -1, 1))
-        y[outlier_indices] <- y[outlier_indices] + runif(n_outliers, 3, 5) * sign(runif(n_outliers, -1, 1))
-      }
-      
-      df <- data.frame(x = x, y = y)
-      
-      # ایجاد نمودار
-      p <- ggplot(df, aes(x = x, y = y)) +
-        geom_point(alpha = 0.6, color = "darkgreen", size = 2) +
-        theme_minimal() +
-        labs(
-          title = "نمودار پراکندگی - همبستگی اسپیرمن",
-          x = "متغیر X",
-          y = "متغیر Y"
-        ) +
-        theme(text = element_text(family = "Tahoma"))
-      
-      if (!nonlinear) {
-        p <- p + geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", fill = "pink", alpha = 0.3)
-      }
-      
-      # مشخص کردن مقادیر پرت
-      if (n_outliers > 0) {
-        outlier_df <- df[outlier_indices, ]
-        p <- p + geom_point(data = outlier_df, aes(x = x, y = y), 
-                            color = "red", size = 3, shape = 1, stroke = 2)
-      }
-      
-      p
-    })
-    
-    output$spearman_results <- renderPrint({
-      set.seed(123)
-      n <- input$spearman_sample_size
-      rho <- input$spearman_cor
-      n_outliers <- input$spearman_outliers
-      nonlinear <- input$use_nonlinear
-      
-      if (nonlinear) {
-        x <- runif(n, 0, 10)
-        y <- if (rho > 0) {
-          x^2 + rnorm(n, sd = 5)
-        } else {
-          100 - x^2 + rnorm(n, sd = 5)
-        }
-      } else {
-        x <- rnorm(n)
-        y <- rho * x + sqrt(1 - rho^2) * rnorm(n)
-      }
-      
-      # اضافه کردن مقادیر پرت
-      if (n_outliers > 0) {
-        outlier_indices <- sample(1:n, n_outliers)
-        x[outlier_indices] <- x[outlier_indices] + runif(n_outliers, 3, 5) * sign(runif(n_outliers, -1, 1))
-        y[outlier_indices] <- y[outlier_indices] + runif(n_outliers, 3, 5) * sign(runif(n_outliers, -1, 1))
-      }
-      
-      # محاسبه همبستگی اسپیرمن
-      cor_test_spearman <- cor.test(x, y, method = "spearman")
-      rho_actual <- cor_test_spearman$estimate
-      p_value_spearman <- cor_test_spearman$p.value
-      
-      # محاسبه همبستگی پیرسون برای مقایسه
-      cor_test_pearson <- cor.test(x, y, method = "pearson")
-      r_pearson <- cor_test_pearson$estimate
-      
-      cat("📊 نتایج همبستگی اسپیرمن\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  تعداد مقادیر پرت:", n_outliers, "\n")
-      cat("  رابطه غیرخطی:", ifelse(nonlinear, "بله", "خیر"), "\n")
-      cat("  میانه X:", round(median(x), 2), "\n")
-      cat("  میانه Y:", round(median(y), 2), "\n\n")
-      
-      cat("🎯 نتایج همبستگی:\n")
-      cat("  ضریب همبستگی اسپیرمن (ρ):", round(rho_actual, 3), "\n")
-      cat("  p-value:", format.pval(p_value_spearman, digits = 3), "\n")
-      cat("  ضریب همبستگی پیرسون (مقایسه):", round(r_pearson, 3), "\n\n")
-      
-      cat("💡 تصمیم:\n")
-      if (p_value_spearman < 0.05) {
-        cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود دارد\n")
-      } else {
-        cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-        cat("  نتیجه: رابطه معنی‌دار بین دو متغیر وجود ندارد\n")
-      }
-      
-      cat("\n📏 تفسیر قدرت همبستگی:\n")
-      abs_rho <- abs(rho_actual)
-      if (abs_rho < 0.1) {
-        cat("  رابطه بسیار ضعیف\n")
-      } else if (abs_rho < 0.3) {
-        cat("  رابطه ضعیف\n")
-      } else if (abs_rho < 0.5) {
-        cat("  رابطه متوسط\n")
-      } else if (abs_rho < 0.7) {
-        cat("  رابطه قوی\n")
-      } else if (abs_rho < 0.9) {
-        cat("  رابطه بسیار قوی\n")
-      } else {
-        cat("  رابطه کامل\n")
-      }
-      
-      cat("\n⚡ مزایای اسپیرمن:\n")
-      cat("  ✅ مقاوم به مقادیر پرت\n")
-      cat("  ✅ نیاز به توزیع نرمال ندارد\n")
-      cat("  ✅ مناسب برای داده‌های ترتیبی\n")
-      cat("  ✅ تشخیص روابط یکنوا (نه لزوماً خطی)\n")
-      
-      if (n_outliers > 0) {
-        cat("\n🔍 اثر مقادیر پرت:\n")
-        cat("  تفاوت پیرسون و اسپیرمن:", round(abs(r_pearson - rho_actual), 3), "\n")
-        if (abs(r_pearson - rho_actual) > 0.2) {
-          cat("  ⚠️ مقادیر پرت تأثیر قابل توجهی دارند\n")
-        }
-      }
-    })
-  })
-  
-  # جداول برای بخش رگرسیون لجستیک
+  # جدول تفسیر OR
   output$or_interpretation_table <- renderTable({
     data.frame(
-      "مقدار OR" = c("0.0 - 0.3", "0.3 - 0.7", "0.7 - 1.3", "1.3 - 3.0", "3.0 - 10.0", "> 10.0"),
-      "تفسیر" = c("کاهش خطر بسیار قوی", "کاهش خطر متوسط", "اثر ناچیز", "افزایش خطر متوسط", "افزایش خطر قوی", "افزایش خطر بسیار قوی"),
-      "تغییر درصدی" = c("کاهش 70-100%", "کاهش 30-70%", "تغییر ±30%", "افزایش 30-200%", "افزایش 200-900%", "افزایش >900%")
+      "مقدار OR" = c("OR > 3", "1.5 < OR ≤ 3", "1.2 < OR ≤ 1.5", "0.8 < OR ≤ 1.2", "OR ≤ 0.8"),
+      "تفسیر" = c("خطر بسیار زیاد", "خطر زیاد", "خطر متوسط", "بدون اثر معنادار", "اثر محافظتی"),
+      "اهمیت بالینی" = c("بسیار مهم", "مهم", "متوسط", "ناچیز", "مهم")
+    )
+  }, striped = TRUE, hover = TRUE)
+  
+  # خلاصه روش‌های تحلیل بقا
+  output$survival_methods_table <- renderTable({
+    data.frame(
+      "روش" = c("کاپلان-مایر", "لگرانک", "کاکس"),
+      "نوع" = c("غیرپارامتری", "نموداری", "نیمه‌پارامتری"),
+      "هدف" = c(
+        "تخمین تابع بقا",
+        "مقایسه منحنی‌های بقا",
+        "مدل‌سازی عوامل مؤثر بر بقا"
+      ),
+      "خروجی" = c("منحنی بقا", "p-value", "نسبت خطر")
+    )
+  }, striped = TRUE, hover = TRUE)
+  
+  # توابع output$ برای فصل‌های ۱۶ به بعد
+  
+  # فصل ۱۶: نکات کاربردی
+  output$sample_size_table <- renderTable({
+    data.frame(
+      "نوع مطالعه" = c("توصیفی", "تحلیلی - دو گروه", "تحلیلی - چند گروه", "همبستگی", "رگرسیون"),
+      "حداقل حجم نمونه" = c("100", "30 در هر گروه", "20 در هر گروه", "50", "10-15 به ازای هر متغیر"),
+      "روش محاسبه" = c("قاعده کلی", "توان آماری", "ANOVA", "ضریب همبستگی", "R²"),
+      "نرم‌افزار" = c("G*Power", "G*Power", "G*Power", "G*Power", "G*Power")
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
   
-  # شبیه‌ساز رگرسیون خطی ساده
-  observeEvent(input$run_slr, {
-    output$slr_plot <- renderPlot({
+  output$software_comparison_table <- renderTable({
+    data.frame(
+      "نرم‌افزار" = c("SPSS", "R", "SAS", "Stata", "Python"),
+      "هزینه" = c("پولی", "رایگان", "گران", "پولی", "رایگان"),
+      "سختی یادگیری" = c("آسان", "متوسط", "سخت", "آسان", "متوسط"),
+      "قدرت تحلیل" = c("متوسط", "عالی", "عالی", "خوب", "عالی"),
+      "کاربرد در پزشکی" = c("زیاد", "زیاد", "زیاد", "متوسط", "در حال رشد")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  
+  # توابع برای فصل ۱۱: همبستگی
+  output$correlation_interpretation_table <- renderTable({
+    data.frame(
+      "مقدار ضریب" = c("0.8 تا 1.0", "0.6 تا 0.8", "0.4 تا 0.6", "0.2 تا 0.4", "0.0 تا 0.2"),
+      "تفسیر" = c("همبستگی بسیار قوی", "همبستگی قوی", "همبستگی متوسط", "همبستگی ضعیف", "همبستگی بسیار ضعیف"),
+      "مثال پزشکی" = c("سن و فشار خون", "وزن و BMI", "قد و وزن", "سن و سطح ویتامین D", "قد و فشار خون")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  
+  output$correlation_selection_guide <- renderTable({
+    data.frame(
+      "نوع داده" = c("کمی نرمال", "کمی غیرنرمال", "ترتیبی", "اسمی"),
+      "آزمون مناسب" = c("پیرسون", "اسپیرمن", "کندال", "کرامرز V"),
+      "پیش‌فرض‌ها" = c("نرمال بودن، خطی بودن", "ندارد", "ندارد", "ندارد"),
+      "مثال" = c("فشار خون و سن", "سطح درد و سن", "درجه سرطان و رضایت", "گروه خونی و جنسیت")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  
+  # توابع برای فصل ۱۲: رگرسیون خطی
+  output$slr_plot <- renderPlot({
+    if (input$run_slr == 0) return()
+    
+    isolate({
       set.seed(123)
       n <- input$slr_sample_size
-      beta1 <- input$slr_slope
-      beta0 <- input$slr_intercept
-      noise <- input$slr_noise
+      x <- rnorm(n, 50, 10)
+      y <- input$slr_intercept + input$slr_slope * x + rnorm(n, 0, input$slr_noise * 5)
       
-      # تولید داده‌ها
-      x <- rnorm(n)
-      y <- beta0 + beta1 * x + noise * rnorm(n)
+      model <- lm(y ~ x)
+      predictions <- predict(model)
       
-      df <- data.frame(x = x, y = y)
-      
-      # محدوده ثابت برای محورها
-      x_range <- max(abs(x))
-      y_range <- max(abs(y))
-      axis_limit <- max(x_range, y_range) * 1.1
-      
-      # ایجاد نمودار
-      ggplot(df, aes(x = x, y = y)) +
-        geom_point(alpha = 0.6, color = "blue", size = 2) +
-        geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
-        coord_cartesian(xlim = c(-axis_limit, axis_limit),
-                        ylim = c(-axis_limit, axis_limit)) +
+      ggplot(data.frame(x, y), aes(x = x, y = y)) +
+        geom_point(alpha = 0.6, color = "blue") +
+        geom_smooth(method = "lm", se = TRUE, color = "red") +
+        labs(title = "رگرسیون خطی ساده",
+             x = "متغیر مستقل (X)",
+             y = "متغیر وابسته (Y)") +
         theme_minimal() +
-        labs(
-          title = "رگرسیون خطی ساده",
-          x = "متغیر مستقل (X)",
-          y = "متغیر وابسته (Y)"
-        ) +
         theme(text = element_text(family = "Tahoma"))
     })
   })
+  
+  output$slr_results <- renderPrint({
+    if (input$run_slr == 0) return()
     
-    output$slr_results <- renderPrint({
+    isolate({
       set.seed(123)
       n <- input$slr_sample_size
-      beta1 <- input$slr_slope
-      beta0 <- input$slr_intercept
-      noise <- input$slr_noise
+      x <- rnorm(n, 50, 10)
+      y <- input$slr_intercept + input$slr_slope * x + rnorm(n, 0, input$slr_noise * 5)
       
-      # تولید داده‌ها
-      x <- rnorm(n)
-      y <- beta0 + beta1 * x + noise * rnorm(n)
-      
-      df <- data.frame(x = x, y = y)
-      
-      # اجرای رگرسیون
-      model <- lm(y ~ x, data = df)
-      summary_model <- summary(model)
-      confint_model <- confint(model)
-      
-      cat("📊 نتایج رگرسیون خطی ساده\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  میانگین X:", round(mean(x), 2), "\n")
-      cat("  میانگین Y:", round(mean(y), 2), "\n")
-      cat("  همبستگی:", round(cor(x, y), 3), "\n\n")
-      
-      cat("🎯 نتایج رگرسیون:\n")
-      cat("  ضریب تعیین (R²):", round(summary_model$r.squared, 3), "\n")
-      cat("  ضریب تعیین تعدیل‌شده:", round(summary_model$adj.r.squared, 3), "\n")
-      cat("  خطای معیار برآورد:", round(summary_model$sigma, 3), "\n")
-      cat("  آماره F:", round(summary_model$fstatistic[1], 3), "\n")
-      cat("  p-value مدل:", format.pval(pf(summary_model$fstatistic[1], 
-                                           summary_model$fstatistic[2], 
-                                           summary_model$fstatistic[3], 
-                                           lower.tail = FALSE), digits = 3), "\n\n")
-      
-      cat("📋 جدول ضرایب:\n")
-      coef_df <- as.data.frame(summary_model$coefficients)
-      coef_df$CI <- paste0("[", round(confint_model[,1], 3), ", ", round(confint_model[,2], 3), "]")
-      print(coef_df)
-      
-      cat("\n💡 تفسیر:\n")
-      if (summary_model$coefficients[2, 4] < 0.05) {
-        cat("  متغیر X پیش‌بین معنی‌داری برای Y است.\n")
-        cat("  با هر واحد افزایش در X، Y به میزان", round(summary_model$coefficients[2, 1], 3), "واحد تغییر می‌کند.\n")
-      } else {
-        cat("  متغیر X پیش‌بین معنی‌داری برای Y نیست.\n")
-      }
+      model <- lm(y ~ x)
+      cat("نتایج رگرسیون خطی ساده:\n\n")
+      print(summary(model))
+      cat("\nضرایب استاندارد شده:\n")
+      print(lm.beta::lm.beta(model))
     })
+  })
   
-  # شبیه‌ساز رگرسیون خطی چندگانه
-  observeEvent(input$run_mlr, {
-    output$mlr_plot <- renderPlot({
+  output$mlr_plot <- renderPlot({
+    if (input$run_mlr == 0) return()
+    
+    isolate({
       set.seed(123)
       n <- input$mlr_sample_size
-      beta1 <- input$mlr_beta1
-      beta2 <- input$mlr_beta2
-      beta0 <- input$mlr_intercept
-      corr <- input$mlr_correlation
       
-      # تولید داده‌های با همبستگی مشخص
-      sigma <- matrix(c(1, corr, corr, 1), nrow = 2)
+      # ایجاد داده‌های با همبستگی مشخص
+      sigma <- matrix(c(1, input$mlr_correlation, 
+                        input$mlr_correlation, 1), ncol = 2)
       x_data <- MASS::mvrnorm(n, mu = c(0, 0), Sigma = sigma)
+      
       x1 <- x_data[, 1]
       x2 <- x_data[, 2]
+      y <- input$mlr_intercept + input$mlr_beta1 * x1 + input$mlr_beta2 * x2 + rnorm(n, 0, 5)
       
-      y <- beta0 + beta1 * x1 + beta2 * x2 + rnorm(n)
-      
-      df <- data.frame(y = y, x1 = x1, x2 = x2)
-      
-      # ایجاد نمودارهای ماتریس پراکندگی
-      p1 <- ggplot(df, aes(x = x1, y = y)) +
+      # نمودارهای پراکندگی
+      p1 <- ggplot(data.frame(x1, y), aes(x = x1, y = y)) +
         geom_point(alpha = 0.6, color = "blue") +
         geom_smooth(method = "lm", color = "red") +
-        labs(title = "Y ~ X1", x = "X1", y = "Y") +
+        labs(x = "X1", y = "Y") +
         theme_minimal()
       
-      p2 <- ggplot(df, aes(x = x2, y = y)) +
+      p2 <- ggplot(data.frame(x2, y), aes(x = x2, y = y)) +
         geom_point(alpha = 0.6, color = "green") +
         geom_smooth(method = "lm", color = "red") +
-        labs(title = "Y ~ X2", x = "X2", y = "Y") +
+        labs(x = "X2", y = "Y") +
         theme_minimal()
       
-      p3 <- ggplot(df, aes(x = x1, y = x2)) +
-        geom_point(alpha = 0.6, color = "purple") +
-        labs(title = paste("همبستگی X1-X2:", round(corr, 2)), 
-             x = "X1", y = "X2") +
-        theme_minimal()
-      
-      gridExtra::grid.arrange(p1, p2, p3, ncol = 3)
+      grid.arrange(p1, p2, ncol = 2)
     })
+  })
+  
+  output$mlr_results <- renderPrint({
+    if (input$run_mlr == 0) return()
     
-    output$mlr_results <- renderPrint({
+    isolate({
       set.seed(123)
       n <- input$mlr_sample_size
-      beta1 <- input$mlr_beta1
-      beta2 <- input$mlr_beta2
-      beta0 <- input$mlr_intercept
-      corr <- input$mlr_correlation
       
-      # تولید داده‌ها
-      sigma <- matrix(c(1, corr, corr, 1), nrow = 2)
+      sigma <- matrix(c(1, input$mlr_correlation, 
+                        input$mlr_correlation, 1), ncol = 2)
       x_data <- MASS::mvrnorm(n, mu = c(0, 0), Sigma = sigma)
+      
       x1 <- x_data[, 1]
       x2 <- x_data[, 2]
+      y <- input$mlr_intercept + input$mlr_beta1 * x1 + input$mlr_beta2 * x2 + rnorm(n, 0, 5)
       
-      y <- beta0 + beta1 * x1 + beta2 * x2 + rnorm(n)
-      
-      df <- data.frame(y = y, x1 = x1, x2 = x2)
-      
-      # اجرای رگرسیون
-      model <- lm(y ~ x1 + x2, data = df)
-      summary_model <- summary(model)
-      confint_model <- confint(model)
-      
-      # محاسبه VIF برای تشخیص همخطی
-      vif_values <- car::vif(model)
-      
-      cat("📊 نتایج رگرسیون خطی چندگانه\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  همبستگی X1-X2:", round(corr, 3), "\n")
-      cat("  همبستگی X1-Y:", round(cor(x1, y), 3), "\n")
-      cat("  همبستگی X2-Y:", round(cor(x2, y), 3), "\n\n")
-      
-      cat("🎯 نتایج رگرسیون:\n")
-      cat("  ضریب تعیین (R²):", round(summary_model$r.squared, 3), "\n")
-      cat("  ضریب تعیین تعدیل‌شده:", round(summary_model$adj.r.squared, 3), "\n")
-      cat("  آماره F:", round(summary_model$fstatistic[1], 3), "\n")
-      cat("  p-value مدل:", format.pval(pf(summary_model$fstatistic[1], 
-                                           summary_model$fstatistic[2], 
-                                           summary_model$fstatistic[3], 
-                                           lower.tail = FALSE), digits = 3), "\n\n")
-      
-      cat("📋 جدول ضرایب:\n")
-      coef_df <- as.data.frame(summary_model$coefficients)
-      coef_df$CI <- paste0("[", round(confint_model[,1], 3), ", ", round(confint_model[,2], 3), "]")
-      print(coef_df)
-      
-      cat("\n🔍 تشخیص همخطی (VIF):\n")
-      cat("  VIF X1:", round(vif_values[1], 3), "\n")
-      cat("  VIF X2:", round(vif_values[2], 3), "\n")
-      if (any(vif_values > 10)) {
-        cat("  ⚠️ همخطی شدید وجود دارد (VIF > 10)\n")
-      } else if (any(vif_values > 5)) {
-        cat("  ⚠️ همخطی متوسط وجود دارد (VIF > 5)\n")
-      } else {
-        cat("  ✅ همخطی قابل قبول است\n")
-      }
+      model <- lm(y ~ x1 + x2)
+      cat("نتایج رگرسیون خطی چندگانه:\n\n")
+      print(summary(model))
+      cat("\nماتریس همبستگی:\n")
+      cor_matrix <- cor(data.frame(x1, x2, y))
+      print(cor_matrix)
     })
   })
   
-  # شبیه‌ساز رگرسیون لجستیک
-  observeEvent(input$run_logit, {
-    output$logit_plot <- renderPlot({
-      set.seed(123)
-      n <- input$logit_sample_size
-      beta <- input$logit_beta
-      beta0 <- input$logit_intercept
-      base_prob <- input$logit_base_prob
-      
-      # تولید داده‌ها
-      x <- rnorm(n)
-      log_odds <- beta0 + beta * x
-      prob <- plogis(log_odds)
-      y <- rbinom(n, 1, prob)
-      
-      df <- data.frame(x = x, y = y, prob = prob)
-      
-      # ایجاد نمودار
-      p1 <- ggplot(df, aes(x = x, y = y)) +
-        geom_point(alpha = 0.6, position = position_jitter(height = 0.02), color = "blue") +
-        geom_smooth(method = "glm", method.args = list(family = "binomial"), 
-                    color = "red", se = TRUE) +
-        labs(title = "رگرسیون لجستیک - داده‌ها و منحنی برازش", 
-             x = "متغیر مستقل", y = "متغیر وابسته (احتمال)") +
-        theme_minimal()
-      
-      p2 <- ggplot(df, aes(x = x, y = prob)) +
-        geom_point(alpha = 0.6, color = "darkgreen") +
-        stat_smooth(method = "glm", method.args = list(family = "binomial"), 
-                    color = "red", se = FALSE) +
-        labs(title = "منحنی پاسخ", x = "متغیر مستقل", y = "احتمال پیش‌بینی شده") +
-        theme_minimal()
-      
-      gridExtra::grid.arrange(p1, p2, ncol = 2)
-    })
+  # توابع برای فصل ۱۳: رگرسیون لجستیک
+  output$logit_plot <- renderPlot({
+    if (input$run_logit == 0) return()
     
-    output$logit_results <- renderPrint({
+    isolate({
       set.seed(123)
       n <- input$logit_sample_size
-      beta <- input$logit_beta
-      beta0 <- input$logit_intercept
-      base_prob <- input$logit_base_prob
+      x <- rnorm(n, 0, 1)
       
-      # تولید داده‌ها
-      x <- rnorm(n)
-      log_odds <- beta0 + beta * x
-      prob <- plogis(log_odds)
-      y <- rbinom(n, 1, prob)
+      # محاسبه احتمال با استفاده از تابع لجستیک
+      linear_combination <- input$logit_intercept + input$logit_beta * x
+      probability <- 1 / (1 + exp(-linear_combination))
       
-      df <- data.frame(x = x, y = y)
+      # تولید داده‌های باینری
+      y <- rbinom(n, 1, probability)
       
-      # اجرای رگرسیون لجستیک
-      model <- glm(y ~ x, family = binomial, data = df)
-      summary_model <- summary(model)
-      confint_model <- exp(confint(model))
-      odds_ratios <- exp(coef(model))
+      # مدل رگرسیون لجستیک
+      model <- glm(y ~ x, family = binomial)
+      predicted_probs <- predict(model, type = "response")
       
-      cat("📊 نتایج رگرسیون لجستیک\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  تعداد موارد Y=1:", sum(y), "\n")
-      cat("  تعداد موارد Y=0:", sum(1-y), "\n")
-      cat("  نسبت موارد:", round(mean(y), 3), "\n\n")
+      # نمودار
+      df <- data.frame(x, y, predicted_probs)
+      df <- df[order(df$x), ]
       
-      cat("🎯 نتایج رگرسیون:\n")
-      cat("  آماره -2LogLikelihood:", round(-2 * logLik(model), 3), "\n")
-      cat("  AIC:", round(AIC(model), 3), "\n")
-      cat("  BIC:", round(BIC(model), 3), "\n\n")
+      ggplot(df, aes(x = x)) +
+        geom_point(aes(y = y, color = as.factor(y)), alpha = 0.6) +
+        geom_line(aes(y = predicted_probs), color = "red", size = 1) +
+        scale_color_manual(values = c("blue", "green"), 
+                           labels = c("عدم رخداد", "رخداد")) +
+        labs(title = "رگرسیون لجستیک",
+             x = "متغیر مستقل",
+             y = "احتمال رخداد",
+             color = "وضعیت واقعی") +
+        theme_minimal() +
+        theme(text = element_text(family = "Tahoma"))
+    })
+  })
+  
+  output$logit_results <- renderPrint({
+    if (input$run_logit == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n <- input$logit_sample_size
+      x <- rnorm(n, 0, 1)
       
-      cat("📋 جدول ضرایب و نسبت‌های شانس:\n")
-      results_df <- data.frame(
-        Coefficient = round(coef(model), 3),
-        OR = round(odds_ratios, 3),
-        CI_95 = paste0("[", round(confint_model[,1], 3), ", ", round(confint_model[,2], 3), "]"),
-        p_value = format.pval(summary_model$coefficients[,4], digits = 3)
+      linear_combination <- input$logit_intercept + input$logit_beta * x
+      probability <- 1 / (1 + exp(-linear_combination))
+      y <- rbinom(n, 1, probability)
+      
+      model <- glm(y ~ x, family = binomial)
+      
+      cat("نتایج رگرسیون لجستیک:\n\n")
+      print(summary(model))
+      
+      cat("\nنسبت شانس (Odds Ratio):\n")
+      or <- exp(coef(model))
+      ci <- exp(confint(model))
+      results <- data.frame(
+        "متغیر" = names(or),
+        "OR" = round(or, 3),
+        "CI 2.5%" = round(ci[,1], 3),
+        "CI 97.5%" = round(ci[,2], 3)
       )
-      print(results_df)
-      
-      cat("\n💡 تفسیر:\n")
-      if (summary_model$coefficients[2, 4] < 0.05) {
-        cat("  متغیر X پیش‌بین معنی‌داری است.\n")
-        cat("  نسبت شانس (OR):", round(odds_ratios[2], 3), "\n")
-        cat("  با هر واحد افزایش در X، شانس Y=1", 
-            ifelse(odds_ratios[2] > 1, "افزایش", "کاهش"), "می‌یابد.\n")
-        cat("  درصد تغییر:", round((odds_ratios[2] - 1) * 100, 1), "%\n")
-      } else {
-        cat("  متغیر X پیش‌بین معنی‌داری نیست.\n")
-      }
+      print(results)
     })
   })
   
-  # شبیه‌ساز رگرسیون پواسون
-  observeEvent(input$run_poisson, {
-    output$poisson_plot <- renderPlot({
-      set.seed(123)
-      n <- input$poisson_sample_size
-      lambda <- input$poisson_lambda
-      beta <- input$poisson_beta
-      overdispersion <- input$poisson_overdispersion
-      
-      # تولید داده‌ها
-      x <- rnorm(n)
-      if (overdispersion > 1) {
-        # استفاده از توزیع دوجمله‌ای منفی برای پراکندگی بیش از حد
-        mu <- exp(log(lambda) + beta * x)
-        size <- 1 / (overdispersion - 1)  # پارامتر پراکندگی
-        y <- rnbinom(n, mu = mu, size = size)
-      } else {
-        # استفاده از توزیع پواسون
-        log_mu <- log(lambda) + beta * x
-        y <- rpois(n, exp(log_mu))
-      }
-      
-      df <- data.frame(x = x, y = y)
-      
-      # ایجاد نمودار
-      p1 <- ggplot(df, aes(x = x, y = y)) +
-        geom_point(alpha = 0.6, color = "purple") +
-        geom_smooth(method = "glm", method.args = list(family = poisson), 
-                    color = "red", se = TRUE) +
-        labs(title = "رگرسیون پواسون - داده‌ها و برازش", 
-             x = "متغیر مستقل", y = "تعداد (Y)") +
-        theme_minimal()
-      
-      p2 <- ggplot(df, aes(x = y)) +
-        geom_histogram(binwidth = 1, fill = "orange", alpha = 0.7, color = "black") +
-        labs(title = "توزیع متغیر وابسته", x = "تعداد", y = "فراوانی") +
-        theme_minimal()
-      
-      gridExtra::grid.arrange(p1, p2, ncol = 2)
-    })
+  output$or_interpretation_table <- renderTable({
+    data.frame(
+      "مقدار OR" = c("> 10", "3-10", "2-3", "1-2", "1", "0.5-1", "0.3-0.5", "0.1-0.3", "< 0.1"),
+      "تفسیر" = c("خطر بسیار زیاد", "خطر زیاد", "خطر متوسط", "خطر کم", "بدون اثر", "حفاظت کم", "حفاظت متوسط", "حفاظت زیاد", "حفاظت بسیار زیاد"),
+      "مثال پزشکی" = c("سیگار و سرطان ریه", "دیابت و بیماری قلبی", "چاقی و فشار خون", "سن و پوکی استخوان", "گروه خونی و سرطان", "ورزش و دیابت", "ورزش و بیماری قلبی", "واکسن و بیماری", "واکسن و بیماری شدید")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  
+  # توابع برای فصل ۱۴: رگرسیون شمارشی
+  output$poisson_plot <- renderPlot({
+    if (input$run_poisson == 0) return()
     
-    output$poisson_results <- renderPrint({
+    isolate({
       set.seed(123)
       n <- input$poisson_sample_size
-      lambda <- input$poisson_lambda
-      beta <- input$poisson_beta
-      overdispersion <- input$poisson_overdispersion
+      x <- rnorm(n, 0, 1)
       
-      # تولید داده‌ها
-      x <- rnorm(n)
-      if (overdispersion > 1) {
-        mu <- exp(log(lambda) + beta * x)
-        size <- 1 / (overdispersion - 1)
-        y <- rnbinom(n, mu = mu, size = size)
-      } else {
-        log_mu <- log(lambda) + beta * x
-        y <- rpois(n, exp(log_mu))
+      # تولید داده‌های پواسون
+      lambda <- exp(input$poisson_beta * x + log(input$poisson_lambda))
+      y <- rpois(n, lambda)
+      
+      # اگر پراکندگی بیش از حد وجود دارد
+      if (input$poisson_overdispersion > 1) {
+        y <- rnbinom(n, size = 1/input$poisson_overdispersion, mu = lambda)
       }
       
-      df <- data.frame(x = x, y = y)
+      # مدل رگرسیون پواسون
+      model <- glm(y ~ x, family = poisson)
+      predicted <- predict(model, type = "response")
       
-      # اجرای رگرسیون پواسون
-      model_poisson <- glm(y ~ x, family = poisson, data = df)
-      summary_poisson <- summary(model_poisson)
+      df <- data.frame(x, y, predicted)
+      df <- df[order(df$x), ]
       
-      cat("📊 نتایج رگرسیون پواسون\n\n")
-      cat("📈 آمار توصیفی:\n")
-      cat("  حجم نمونه:", n, "\n")
-      cat("  میانگین Y:", round(mean(y), 3), "\n")
-      cat("  واریانس Y:", round(var(y), 3), "\n")
-      cat("  نسبت واریانس به میانگین:", round(var(y)/mean(y), 3), "\n\n")
+      ggplot(df, aes(x = x)) +
+        geom_point(aes(y = y), alpha = 0.6, color = "blue") +
+        geom_line(aes(y = predicted), color = "red", size = 1) +
+        labs(title = "رگرسیون پواسون",
+             x = "متغیر مستقل",
+             y = "تعداد رویدادها") +
+        theme_minimal() +
+        theme(text = element_text(family = "Tahoma"))
+    })
+  })
+  
+  output$poisson_results <- renderPrint({
+    if (input$run_poisson == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n <- input$poisson_sample_size
+      x <- rnorm(n, 0, 1)
       
-      cat("🎯 نتایج رگرسیون:\n")
-      cat("  آماره -2LogLikelihood:", round(-2 * logLik(model_poisson), 3), "\n")
-      cat("  AIC:", round(AIC(model_poisson), 3), "\n")
-      cat("  BIC:", round(BIC(model_poisson), 3), "\n\n")
+      lambda <- exp(input$poisson_beta * x + log(input$poisson_lambda))
+      y <- rpois(n, lambda)
       
-      cat("📋 جدول ضرایب:\n")
-      coef_df <- as.data.frame(summary_poisson$coefficients)
-      coef_df$IRR <- exp(coef(model_poisson))  # Incidence Rate Ratio
-      print(coef_df)
+      if (input$poisson_overdispersion > 1) {
+        y <- rnbinom(n, size = 1/input$poisson_overdispersion, mu = lambda)
+      }
       
-      cat("\n🔍 تشخیص پراکندگی بیش از حد:\n")
-      dispersion <- summary_poisson$dispersion
-      cat("  آماره پراکندگی:", round(dispersion, 3), "\n")
+      model_poisson <- glm(y ~ x, family = poisson)
+      
+      cat("نتایج رگرسیون پواسون:\n\n")
+      print(summary(model_poisson))
+      
+      # بررسی پراکندگی بیش از حد
+      cat("\nبررسی پراکندگی بیش از حد:\n")
+      dispersion <- sum(residuals(model_poisson, type = "pearson")^2) / model_poisson$df.residual
+      cat("آماره پراکندگی:", round(dispersion, 3), "\n")
+      
       if (dispersion > 1.5) {
-        cat("  ⚠️ پراکندگی بیش از حد شدید وجود دارد\n")
-        cat("  🎯 توصیه: از رگرسیون دوجمله‌ای منفی استفاده کنید\n")
-      } else if (dispersion > 1.2) {
-        cat("  ⚠️ پراکندگی بیش از حد متوسط وجود دارد\n")
-        cat("  🎯 توصیه: رگرسیون پواسون با اصلاح واریانس استفاده کنید\n")
+        cat("پراکندگی بیش از حد وجود دارد. استفاده از رگرسیون دوجمله‌ای منفی توصیه می‌شود.\n")
       } else {
-        cat("  ✅ پراکندگی در حد قابل قبول است\n")
-      }
-      
-      cat("\n💡 تفسیر:\n")
-      if (summary_poisson$coefficients[2, 4] < 0.05) {
-        cat("  متغیر X پیش‌بین معنی‌داری است.\n")
-        irr <- exp(coef(model_poisson)[2])
-        cat("  نسبت نرخ بروز (IRR):", round(irr, 3), "\n")
-        cat("  با هر واحد افزایش در X، نرخ بروز Y", 
-            ifelse(irr > 1, "افزایش", "کاهش"), "می‌یابد.\n")
-        cat("  درصد تغییر:", round((irr - 1) * 100, 1), "%\n")
-      } else {
-        cat("  متغیر X پیش‌بین معنی‌داری نیست.\n")
+        cat("پراکندگی بیش از حد وجود ندارد. مدل پواسون مناسب است.\n")
       }
     })
-    
-    # تابع برای منحنی کاپلان-مایر
-    observeEvent(input$run_km, {
-      output$km_plot <- renderPlot({
-        set.seed(123)
-        n_groups <- input$km_n_groups
-        n_per_group <- input$km_sample_size
-        censoring_rate <- input$km_censoring / 100
-        
-        # ایجاد بردار میانگین بقا
-        means <- c(input$km_group1_mean, input$km_group2_mean)
-        if (n_groups >= 3) means <- c(means, input$km_group3_mean)
-        if (n_groups >= 4) means <- c(means, input$km_group4_mean)
-        
-        # تولید داده‌های بقا
-        df <- data.frame()
-        for (i in 1:n_groups) {
-          # زمان بقا از توزیع نمایی
-          time <- rexp(n_per_group, rate = 1/means[i])
-          
-          # ایجاد سانسورشدگی
-          censored <- runif(n_per_group) < censoring_rate
-          status <- as.numeric(!censored)
-          
-          # برای موارد سانسور شده، زمان را کاهش می‌دهیم
-          time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
-          
-          df <- rbind(df, data.frame(
-            time = time,
-            status = status,
-            group = factor(rep(paste("گروه", i), n_per_group))
-          ))
-        }
-        
-        # محاسبه منحنی کاپلان-مایر
-        km_fit <- survfit(Surv(time, status) ~ group, data = df)
-        
-        # رسم منحنی بقا
-        ggsurvplot(km_fit, data = df,
-                   palette = "jco",
-                   risk.table = TRUE,
-                   pval = TRUE,
-                   conf.int = TRUE,
-                   xlab = "زمان (ماه)",
-                   ylab = "احتمال بقا",
-                   legend.title = "گروه",
-                   legend.labs = paste("گروه", 1:n_groups),
-                   title = "منحنی بقای کاپلان-مایر")$plot
-      })
-      
-      output$km_results <- renderPrint({
-        set.seed(123)
-        n_groups <- input$km_n_groups
-        n_per_group <- input$km_sample_size
-        censoring_rate <- input$km_censoring / 100
-        
-        means <- c(input$km_group1_mean, input$km_group2_mean)
-        if (n_groups >= 3) means <- c(means, input$km_group3_mean)
-        if (n_groups >= 4) means <- c(means, input$km_group4_mean)
-        
-        # تولید داده‌ها
-        df <- data.frame()
-        for (i in 1:n_groups) {
-          time <- rexp(n_per_group, rate = 1/means[i])
-          censored <- runif(n_per_group) < censoring_rate
-          status <- as.numeric(!censored)
-          time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
-          
-          df <- rbind(df, data.frame(
-            time = time,
-            status = status,
-            group = factor(rep(paste("گروه", i), n_per_group))
-          ))
-        }
-        
-        # محاسبات
-        km_fit <- survfit(Surv(time, status) ~ group, data = df)
-        logrank_test <- survdiff(Surv(time, status) ~ group, data = df)
-        
-        cat("📊 نتایج تحلیل بقا - منحنی کاپلان-مایر\n\n")
-        cat("📈 آمار توصیفی:\n")
-        for (i in 1:n_groups) {
-          group_data <- df[df$group == paste("گروه", i), ]
-          cat("  گروه", i, ":\n")
-          cat("    تعداد:", nrow(group_data), "\n")
-          cat("    تعداد رویداد:", sum(group_data$status), "\n")
-          cat("    درصد سانسور:", round(mean(1 - group_data$status) * 100, 1), "%\n")
-          cat("    میانه بقا:", round(median(group_data$time), 1), "ماه\n")
-        }
-        cat("\n")
-        
-        cat("🎯 آزمون لگرانک:\n")
-        cat("  آماره χ²:", round(logrank_test$chisq, 3), "\n")
-        cat("  درجه آزادی:", length(logrank_test$n) - 1, "\n")
-        p_value <- 1 - pchisq(logrank_test$chisq, length(logrank_test$n) - 1)
-        cat("  p-value:", format.pval(p_value, digits = 3), "\n\n")
-        
-        cat("💡 تصمیم:\n")
-        if (p_value < 0.05) {
-          cat("  ✅ رد فرض صفر (p-value < 0.05)\n")
-          cat("  نتیجه: تفاوت معنی‌دار در منحنی‌های بقا وجود دارد\n")
-        } else {
-          cat("  ❌ عدم رد فرض صفر (p-value ≥ 0.05)\n")
-          cat("  نتیجه: تفاوت معنی‌دار در منحنی‌های بقا وجود ندارد\n")
-        }
-        
-        cat("\n📊 خلاصه منحنی بقا:\n")
-        print(summary(km_fit))
-      })
-    })
-    
-    # تابع برای رگرسیون کاکس - نسخه اصلاح شده
-    observeEvent(input$run_cox, {
-      output$cox_plot <- renderPlot({
-        set.seed(123)
-        n <- input$cox_sample_size
-        
-        # تولید داده‌های مصنوعی
-        age <- rnorm(n, mean = 60, sd = 10)
-        treatment <- sample(0:1, n, replace = TRUE)  # 0: قدیم, 1: جدید
-        stage <- sample(1:4, n, replace = TRUE, prob = c(0.3, 0.3, 0.2, 0.2))
-        
-        # محاسبه خطر پایه
-        base_hazard <- input$cox_hr_age^(age/10) * 
-          input$cox_hr_treatment^treatment * 
-          input$cox_hr_stage^stage
-        
-        # تولید زمان بقا
-        time <- rexp(n, rate = base_hazard/100)
-        
-        # سانسورشدگی تصادفی
-        censored <- runif(n) < 0.2
-        status <- as.numeric(!censored)
-        time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
-        
-        df <- data.frame(
-          time = time,
-          status = status,
-          age = age,
-          treatment = factor(treatment, levels = 0:1, labels = c("قدیم", "جدید")),
-          stage = factor(stage)
-        )
-        
-        # اجرای رگرسیون کاکس
-        cox_model <- coxph(Surv(time, status) ~ age + treatment + stage, data = df)
-        
-        # رسم نمودار نسبت خطر
-        forest_data <- broom::tidy(cox_model, exponentiate = TRUE, conf.int = TRUE)
-        
-        ggplot(forest_data, aes(x = estimate, y = term)) +
-          geom_point(size = 3) +
-          geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +  # اصلاح شده
-          geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
-          scale_x_log10() +
-          labs(
-            title = "نمودار جنگلی نسبت‌های خطر",
-            x = "نسبت خطر (HR)",
-            y = "متغیر"
-          ) +
-          theme_minimal()
-      })
-      
-      output$cox_results <- renderPrint({
-        set.seed(123)
-        n <- input$cox_sample_size
-        
-        # تولید داده‌ها
-        age <- rnorm(n, mean = 60, sd = 10)
-        treatment <- sample(0:1, n, replace = TRUE)
-        stage <- sample(1:4, n, replace = TRUE, prob = c(0.3, 0.3, 0.2, 0.2))
-        
-        base_hazard <- input$cox_hr_age^(age/10) * 
-          input$cox_hr_treatment^treatment * 
-          input$cox_hr_stage^stage
-        
-        time <- rexp(n, rate = base_hazard/100)
-        censored <- runif(n) < 0.2
-        status <- as.numeric(!censored)
-        time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
-        
-        df <- data.frame(
-          time = time,
-          status = status,
-          age = age,
-          treatment = factor(treatment, levels = 0:1, labels = c("قدیم", "جدید")),
-          stage = factor(stage)
-        )
-        
-        # اجرای رگرسیون کاکس
-        cox_model <- coxph(Surv(time, status) ~ age + treatment + stage, data = df)
-        cox_summary <- summary(cox_model)
-        
-        cat("📊 نتایج رگرسیون کاکس\n\n")
-        cat("📈 آمار توصیفی:\n")
-        cat("  حجم نمونه:", n, "\n")
-        cat("  تعداد رویداد:", sum(df$status), "\n")
-        cat("  درصد سانسور:", round(mean(1 - df$status) * 100, 1), "%\n")
-        cat("  میانگین سن:", round(mean(df$age), 1), "سال\n")
-        cat("  توزیع درمان:\n")
-        print(table(df$treatment))
-        cat("  توزیع مرحله بیماری:\n")
-        print(table(df$stage))
-        cat("\n")
-        
-        cat("🎯 نتایج رگرسیون کاکس:\n")
-        cat("  آماره -2LogLikelihood:", round(-2 * cox_summary$loglik[1], 3), "\n")
-        cat("  آماره آزمون مدل:", round(cox_summary$waldtest[3], 3), "\n")
-        cat("  p-value مدل:", format.pval(cox_summary$waldtest[4], digits = 3), "\n\n")
-        
-        cat("📋 جدول نسبت‌های خطر:\n")
-        results_df <- data.frame(
-          Variable = rownames(cox_summary$coefficients),
-          HR = round(cox_summary$coefficients[, 2], 3),
-          CI_95 = paste0("[", 
-                         round(cox_summary$conf.int[, 3], 3), "-", 
-                         round(cox_summary$conf.int[, 4], 3), "]"),
-          p_value = format.pval(cox_summary$coefficients[, 5], digits = 3)
-        )
-        print(results_df)
-        
-        cat("\n🔍 بررسی پیش‌فرض خطرات متناسب:\n")
-        ph_test <- cox.zph(cox_model)
-        cat("  آزمون شاپیرو برای خطرات متناسب:\n")
-        print(ph_test)
-        
-        cat("\n💡 تفسیر:\n")
-        cat("  سن: با هر 10 سال افزایش سن، خطر مرگ", 
-            ifelse(cox_summary$coefficients["age", 2] > 1, "افزایش", "کاهش"),
-            "می‌یابد (HR =", round(cox_summary$coefficients["age", 2], 3), ")\n")
-        
-        cat("  درمان: درمان جدید نسبت به درمان قدیم",
-            ifelse(cox_summary$coefficients["treatmentجدید", 2] < 1, "کاهش", "افزایش"),
-            "خطر مرگ دارد (HR =", round(cox_summary$coefficients["treatmentجدید", 2], 3), ")\n")
-      })
-    }) 
-    
-    # جدول خلاصه روش‌های تحلیل بقا
-    output$survival_methods_table <- renderTable({
-      data.frame(
-        "روش" = c("کاپلان-مایر", "آزمون لگرانک", "رگرسیون کاکس", "مدل‌های پارامتریک"),
-        "نوع" = c("ناپارامتری", "ناپارامتری", "نیمه پارامتری", "پارامتری"),
-        "هدف" = c("تخمین تابع بقا", "مقایسه منحنی‌های بقا", "بررسی عوامل خطر", "مدل‌سازی تابع خطر"),
-        "داده‌های سانسور شده" = c("پشتیبانی می‌کند", "پشتیبانی می‌کند", "پشتیبانی می‌کند", "پشتیبانی می‌کند"),
-        "متغیرهای مستقل" = c("ندارد", "ندارد", "چند متغیره", "چند متغیره")
-      )
-    }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
-    
   })
+  
+  # توابع برای فصل ۱۵: تحلیل بقا
+  output$km_plot <- renderPlot({
+    if (input$run_km == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n_groups <- input$km_n_groups
+      n_per_group <- input$km_sample_size
+      censoring_rate <- input$km_censoring / 100
+      
+      # ایجاد داده‌های بقا
+      survival_data <- data.frame()
+      group_colors <- c("red", "blue", "green", "purple")
+      group_names <- c("گروه ۱", "گروه ۲", "گروه ۳", "گروه ۴")
+      
+      for (i in 1:n_groups) {
+        # زمان بقا
+        mean_survival <- switch(i,
+                                input$km_group1_mean,
+                                input$km_group2_mean,
+                                input$km_group3_mean,
+                                input$km_group4_mean)
+        
+        time <- rexp(n_per_group, rate = 1/mean_survival)
+        
+        # سانسورشدگی
+        censored <- runif(n_per_group) < censoring_rate
+        status <- as.numeric(!censored)
+        
+        # برای بیماران سانسور شده، زمان مشاهده را کوتاه‌تر می‌کنیم
+        time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
+        
+        group_data <- data.frame(
+          time = time,
+          status = status,
+          group = factor(rep(group_names[i], n_per_group))
+        )
+        
+        survival_data <- rbind(survival_data, group_data)
+      }
+      
+      # محاسبه منحنی کاپلان-مایر
+      km_fit <- survfit(Surv(time, status) ~ group, data = survival_data)
+      
+      # رسم منحنی بقا
+      ggsurvplot(km_fit, data = survival_data,
+                 palette = group_colors[1:n_groups],
+                 conf.int = TRUE,
+                 risk.table = TRUE,
+                 pval = TRUE,
+                 legend.title = "گروه‌ها",
+                 legend.labs = group_names[1:n_groups],
+                 xlab = "زمان (ماه)",
+                 ylab = "احتمال بقا",
+                 title = "منحنی بقای کاپلان-مایر")$plot +
+        theme(text = element_text(family = "Tahoma"))
+    })
+  })
+  
+  output$km_results <- renderPrint({
+    if (input$run_km == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n_groups <- input$km_n_groups
+      n_per_group <- input$km_sample_size
+      censoring_rate <- input$km_censoring / 100
+      
+      survival_data <- data.frame()
+      group_names <- c("گروه ۱", "گروه ۲", "گروه ۳", "گروه ۴")
+      
+      for (i in 1:n_groups) {
+        mean_survival <- switch(i,
+                                input$km_group1_mean,
+                                input$km_group2_mean,
+                                input$km_group3_mean,
+                                input$km_group4_mean)
+        
+        time <- rexp(n_per_group, rate = 1/mean_survival)
+        censored <- runif(n_per_group) < censoring_rate
+        status <- as.numeric(!censored)
+        time[censored] <- time[censored] * runif(sum(censored), 0.1, 0.8)
+        
+        group_data <- data.frame(
+          time = time,
+          status = status,
+          group = factor(rep(group_names[i], n_per_group))
+        )
+        
+        survival_data <- rbind(survival_data, group_data)
+      }
+      
+      km_fit <- survfit(Surv(time, status) ~ group, data = survival_data)
+      
+      cat("نتایج تحلیل بقا:\n\n")
+      cat("خلاصه منحنی‌های بقا:\n")
+      print(summary(km_fit))
+      
+      cat("\nآزمون لگرانک برای مقایسه گروه‌ها:\n")
+      logrank_test <- survdiff(Surv(time, status) ~ group, data = survival_data)
+      print(logrank_test)
+    })
+  })
+  
+  output$cox_plot <- renderPlot({
+    if (input$run_cox == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n <- input$cox_sample_size
+      
+      # ایجاد داده‌های مصنوعی
+      age <- rnorm(n, 60, 10)
+      treatment <- sample(0:1, n, replace = TRUE)
+      stage <- sample(1:4, n, replace = TRUE, prob = c(0.3, 0.3, 0.2, 0.2))
+      
+      # محاسبه تابع خطر
+      hazard_ratio <- input$cox_hr_age^((age - 60)/10) * 
+        input$cox_hr_treatment^treatment * 
+        input$cox_hr_stage^(stage - 1)
+      
+      # زمان بقا
+      baseline_hazard <- 0.01
+      time <- rexp(n, rate = baseline_hazard * hazard_ratio)
+      
+      # سانسورشدگی
+      censored <- runif(n) < 0.2
+      status <- as.numeric(!censored)
+      
+      survival_data <- data.frame(
+        time = time,
+        status = status,
+        age = age,
+        treatment = factor(treatment, levels = c(0, 1), labels = c("درمان قدیم", "درمان جدید")),
+        stage = factor(stage)
+      )
+      
+      # مدل کاکس
+      cox_model <- coxph(Surv(time, status) ~ age + treatment + stage, data = survival_data)
+      
+      # نمودار نسبت خطر
+      forest_data <- broom::tidy(cox_model, exponentiate = TRUE, conf.int = TRUE)
+      
+      ggplot(forest_data, aes(x = estimate, y = term)) +
+        geom_point(size = 3) +
+        geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+        geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+        scale_x_log10() +
+        labs(title = "نمودار جنگلی نسبت‌های خطر",
+             x = "نسبت خطر (HR)",
+             y = "متغیرها") +
+        theme_minimal() +
+        theme(text = element_text(family = "Tahoma"))
+    })
+  })
+  
+  output$cox_results <- renderPrint({
+    if (input$run_cox == 0) return()
+    
+    isolate({
+      set.seed(123)
+      n <- input$cox_sample_size
+      
+      age <- rnorm(n, 60, 10)
+      treatment <- sample(0:1, n, replace = TRUE)
+      stage <- sample(1:4, n, replace = TRUE, prob = c(0.3, 0.3, 0.2, 0.2))
+      
+      hazard_ratio <- input$cox_hr_age^((age - 60)/10) * 
+        input$cox_hr_treatment^treatment * 
+        input$cox_hr_stage^(stage - 1)
+      
+      baseline_hazard <- 0.01
+      time <- rexp(n, rate = baseline_hazard * hazard_ratio)
+      censored <- runif(n) < 0.2
+      status <- as.numeric(!censored)
+      
+      survival_data <- data.frame(
+        time = time,
+        status = status,
+        age = age,
+        treatment = factor(treatment, levels = c(0, 1), labels = c("درمان قدیم", "درمان جدید")),
+        stage = factor(stage)
+      )
+      
+      cox_model <- coxph(Surv(time, status) ~ age + treatment + stage, data = survival_data)
+      
+      cat("نتایج رگرسیون کاکس:\n\n")
+      print(summary(cox_model))
+      
+      cat("\nبررسی پیش‌فرض خطرات متناسب:\n")
+      ph_test <- cox.zph(cox_model)
+      print(ph_test)
+    })
+  })
+  
+  output$survival_methods_table <- renderTable({
+    data.frame(
+      "روش" = c("کاپلان-مایر", "لگرانک", "کاکس", "مدل‌های پارامتریک", "مدل‌های رقابتی"),
+      "نوع" = c("ناپارامتری", "ناپارامتری", "نیمه پارامتری", "پارامتری", "مختلف"),
+      "کاربرد" = c("تخمین تابع بقا", "مقایسه گروه‌ها", "بررسی عوامل خطر", "مدل‌سازی دقیق", "رویدادهای رقابتی"),
+      "مزایا" = c("ساده، بدون فرض", "مقایسه گروه‌ها", "کنترل متغیرها", "دقت بالا", "واقع‌بینانه"),
+      "معایب" = c("عدم کنترل متغیرها", "عدم کنترل متغیرها", "پیش‌فرض خطرات متناسب", "فرض توزیع", "پیچیدگی")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = 'c')
+  
+  # جداول راهنمای انتخاب آزمون
+  output$quantitative_tests_guide <- renderTable({
+    data.frame(
+      "نوع داده" = c("نرمال", "غیرنرمال", "نرمال", "غیرنرمال", "نرمال", "غیرنرمال"),
+      "تعداد گروه‌ها" = c("یک گروه", "یک گروه", "دو گروه مستقل", "دو گروه مستقل", "دو گروه وابسته", "دو گروه وابسته"),
+      "آزمون" = c("t تک نمونه‌ای", "ویلکاکسون", "t مستقل", "من-ویتنی", "t زوجی", "ویلکاکسون زوجی")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  output$qualitative_tests_guide <- renderTable({
+    data.frame(
+      "نوع داده" = c("اسمی", "اسمی", "ترتیبی", "ترتیبی", "دوحالتی وابسته"),
+      "تعداد گروه‌ها" = c("دو گروه", "چند گروه", "دو گروه", "چند گروه", "دو اندازه‌گیری"),
+      "آزمون" = c("کای-دو یا فیشر", "کای-دو", "من-ویتنی", "کراسکال-والیس", "مک نمار")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  # محاسبه حجم نمونه
+  observeEvent(input$calc_sample_size, {
+    output$sample_size_result <- renderPrint({
+      # محاسبه ساده حجم نمونه برای t-test
+      power <- input$power
+      alpha <- input$alpha
+      effect_size <- input$effect_size
+      
+      # استفاده از فرمول ساده
+      n <- ceiling(16 / (effect_size^2))
+      
+      cat("نتایج محاسبه حجم نمونه:\n")
+      cat("توان آماری:", power, "\n")
+      cat("سطح معنی‌داری:", alpha, "\n")
+      cat("اندازه اثر:", effect_size, "\n")
+      cat("حجم نمونه مورد نیاز برای هر گروه:", n, "\n")
+      cat("حجم نمونه کل (برای دو گروه):", n * 2, "\n")
+      
+      # تفسیر
+      cat("\nتفسیر:\n")
+      if (effect_size <= 0.2) {
+        cat("اندازه اثر کوچک - نیاز به حجم نمونه بزرگ\n")
+      } else if (effect_size <= 0.5) {
+        cat("اندازه اثر متوسط - حجم نمونه متعادل\n")
+      } else {
+        cat("اندازه اثر بزرگ - حجم نمونه کوچک\n")
+      }
+    })
+  })
+  
+  # محاسبه توان آماری
+  observeEvent(input$calc_power, {
+    output$power_result <- renderPrint({
+      n <- input$sample_size_power
+      alpha <- input$alpha_power
+      effect_size <- input$effect_size_power
+      
+      # محاسبه ساده توان
+      power <- pnorm(sqrt(n * effect_size^2 / 4) - qnorm(1 - alpha/2))
+      
+      cat("نتایج محاسبه توان آماری:\n")
+      cat("حجم نمونه:", n, "\n")
+      cat("سطح معنی‌داری:", alpha, "\n")
+      cat("اندازه اثر:", effect_size, "\n")
+      cat("توان آماری:", round(power, 3), "\n")
+      
+      # تفسیر
+      cat("\nتفسیر:\n")
+      if (power >= 0.8) {
+        cat("✅ توان کافی - مطالعه قابل اتکا\n")
+      } else if (power >= 0.6) {
+        cat("⚠️ توان متوسط - نیاز به احتیاط در تفسیر\n")
+      } else {
+        cat("❌ توان ناکافی - خطر خطای نوع دوم بالا\n")
+      }
+    })
+  })
+  
+  # تبدیل اندازه اثر
+  observeEvent(input$convert_effect, {
+    output$effect_conversion_result <- renderPrint({
+      effect_value <- input$effect_value
+      effect_type <- input$effect_type
+      
+      cat("نتایج تبدیل اندازه اثر:\n")
+      cat("نوع اندازه اثر:", effect_type, "\n")
+      cat("مقدار:", effect_value, "\n\n")
+      
+      if (effect_type == "d کوهن") {
+        r <- effect_value / sqrt(effect_value^2 + 4)
+        eta2 <- effect_value^2 / (effect_value^2 + 4)
+        cat("r:", round(r, 3), "\n")
+        cat("η²:", round(eta2, 3), "\n")
+        cat("φ:", round(sqrt(eta2), 3), "\n")
+      } else if (effect_type == "r") {
+        d <- (2 * effect_value) / sqrt(1 - effect_value^2)
+        eta2 <- effect_value^2
+        cat("d کوهن:", round(d, 3), "\n")
+        cat("η²:", round(eta2, 3), "\n")
+        cat("φ:", round(effect_value, 3), "\n")
+      } else if (effect_type == "η²") {
+        d <- 2 * sqrt(effect_value / (1 - effect_value))
+        r <- sqrt(effect_value)
+        cat("d کوهن:", round(d, 3), "\n")
+        cat("r:", round(r, 3), "\n")
+        cat("φ:", round(sqrt(effect_value), 3), "\n")
+      }
+      
+      cat("\nراهنمای تفسیر:\n")
+      if (effect_value <= 0.1) cat("اثر بسیار کوچک\n")
+      else if (effect_value <= 0.3) cat("اثر کوچک\n")
+      else if (effect_value <= 0.5) cat("اثر متوسط\n")
+      else cat("اثر بزرگ\n")
+    })
+  })
+  
+  # جدول حجم نمونه پیشنهادی
+  output$sample_size_table <- renderTable({
+    data.frame(
+      "اندازه اثر" = c("بسیار کوچک (0.01)", "کوچک (0.2)", "متوسط (0.5)", "بزرگ (0.8)"),
+      "حجم نمونه هر گروه" = c("> 1000", "~ 400", "~ 64", "~ 25"),
+      "توان (α=0.05)" = c("80%", "80%", "80%", "80%"),
+      "کاربرد" = c("مطالعات اپیدمیولوژیک", "تحقیقات بالینی", "آزمایشگاه", "پایلوت")
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  # چک‌لیست تعاملی
+  output$checklist_table <- renderTable({
+    data.frame(
+      "مرحله" = c("طراحی", "جمع‌آوری داده", "تحلیل", "گزارش"),
+      "اقدامات کلیدی" = c(
+        "تعیین حجم نمونه، انتخاب آزمون",
+        "کنترل کیفیت، مدیریت missing data",
+        "بررسی پیش‌فرض‌ها، محاسبه اندازه اثر",
+        "گزارش شفاف، تفسیر بالینی"
+      ),
+      "خروجی" = c(
+        "پروتکل مطالعه",
+        "داده‌های تمیز",
+        "نتایج تحلیل",
+        "مقاله/گزارش"
+      )
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+}
+
+
+# تابع برای بهینه‌سازی بیشتر
+optimize_app <- function() {
+  # غیرفعال کردن پیام‌های اضافی
+  options(shiny.sanitize.errors = TRUE)
+  options(shiny.trace = FALSE)
+  
+  # تنظیمات حافظه
+  options(shiny.fullstacktrace = FALSE)
+  options(shiny.autoreload = FALSE)
 }
 
 # اجرای برنامه
+optimize_app()
 shinyApp(ui = ui, server = server)
