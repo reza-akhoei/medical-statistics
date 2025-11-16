@@ -1,4 +1,3 @@
-# app.R - نسخه بهینه شده
 library(shiny)
 library(ggplot2)
 library(dplyr)
@@ -12,6 +11,7 @@ library(survival)
 library(survminer)
 library(tidyr)
 library(memoise) # اضافه کردن caching برای محاسبات سنگین
+library(RSQLite)
 
 # تعریف توابع سنگین برای caching
 calculate_normal_distribution <- function(mean, sd, n) {
@@ -423,6 +423,145 @@ ui <- fluidPage(
         .section-title {
           font-size: 16px;
         }
+        .rating-comment-section {
+          border: 2px solid #007bff;
+          margin-top: 30px;
+        }
+  
+        .rating-box, .comment-box {
+          background: white;
+          padding: 15px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          height: 100%;
+        }
+  
+        .stat-box {
+          background: linear-gradient(45deg, #667eea, #764ba2);
+          color: white;
+          padding: 10px;
+          border-radius: 8px;
+          text-align: center;
+        }
+  
+        .stat-box h6 {
+          margin: 0;
+          font-size: 12px;
+          opacity: 0.9;
+        }
+  
+        .comment-item {
+          background: white;
+          margin: 10px 0;
+          padding: 15px;
+          border-radius: 8px;
+          border-right: 4px solid #007bff;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+         }
+  
+         .comment-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #666;
+         }
+  
+         .comment-email {
+            font-weight: bold;
+            color: #007bff;
+         }
+  
+         .comment-content {
+            font-size: 14px;
+            line-height: 1.5;
+         }
+  
+         .feedback-stats {
+            margin: 20px 0;
+         }
+         
+         .shiny-input-container:has(.shiny-input-invalid) {
+            border: 2px solid #dc3545;
+            border-radius: 5px;
+            padding: 5px;
+         }
+  
+         .shiny-input-container:has(.shiny-input-valid) {
+            border: 2px solid #28a745;
+            border-radius: 5px;
+            padding: 5px;
+         }
+  
+         .email-requirements {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+         }
+  
+         .validation-message {
+            font-size: 12px;
+            margin-top: 5px;
+            padding: 5px;
+            border-radius: 3px;
+          }
+  
+         .validation-error {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+          }
+  
+         .validation-success {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+          }
+          .rate-limit-panel {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+          }
+  
+          .limit-stat {
+            text-align: center;
+            padding: 10px;
+          }
+  
+          .limit-stat h6 {
+            margin: 0;
+            font-size: 12px;
+            color: #856404;
+          }
+  
+          .limit-stat .shiny-text-output {
+            font-size: 16px;
+            font-weight: bold;
+            color: #d63031;
+          }
+  
+          .limit-info {
+            text-align: center;
+            font-style: italic;
+          }
+  
+          /* استایل برای دکمه‌های غیرفعال */
+          .btn-rate-limited {
+            opacity: 0.6;
+            cursor: not-allowed;
+          }
+  
+          .rate-limit-warning {
+            animation: pulse 2s infinite;
+          }
+  
+          @keyframes pulse {
+          0% { background-color: #fff3cd; }
+          50% { background-color: #ffeaa7; }
+          100% { background-color: #fff3cd; }
+          }
       }
     "))
   ),
@@ -508,10 +647,138 @@ ui <- fluidPage(
     
     mainPanel(
       width = 9,
-      uiOutput("main_content")
+      uiOutput("main_content"),
+      div(class = "rating-comment-section",
+          style = "margin-top: 30px; padding: 20px; background-color: #f8f9fa; border-radius: 10px;",
+          
+          h4("💬 سیستم ارزیابی و نظرسنجی"),
+          
+          fluidRow(
+            column(6,
+                   div(class = "rating-box",
+                       h5("⭐ به این فصل امتیاز دهید"),
+                       selectInput("rating_value", "امتیاز (1-5):",
+                                   choices = c("5 - عالی" = 5,
+                                               "4 - خوب" = 4,
+                                               "3 - متوسط" = 3,
+                                               "2 - ضعیف" = 2,
+                                               "1 - بسیار ضعیف" = 1),
+                                   selected = 5),
+                       #textInput("user_email_rating", "ایمیل شما:", 
+                       #         placeholder = "example@gmail.com",
+                       #          width = "100%"),
+                       
+                       # برای فیلد ایمیل در بخش نظردهی:
+                       #textInput("user_email_comment", "ایمیل شما:", 
+                       #           placeholder = "example@gmail.com",
+                       #          width = "100%"),
+                       actionButton("submit_rating", "ثبت امتیاز", 
+                                    class = "btn btn-success btn-sm")
+                   )
+            ),
+            column(6,
+                   div(class = "comment-box",
+                       h5("📝 نظر خود را ثبت کنید"),
+                       textInput("user_email_comment", "ایمیل شما:", 
+                                 placeholder = "example@email.com"),
+                       textAreaInput("user_comment", "نظر شما:", 
+                                     rows = 3, 
+                                     placeholder = "نظرات و پیشنهادات خود را وارد کنید..."),
+                       actionButton("submit_comment", "ثبت نظر", 
+                                    class = "btn btn-primary btn-sm")
+                   )
+            )
+          ),
+          
+          fluidRow(
+            column(12,
+                   div(class = "feedback-stats",
+                       h5("📊 آمار بازخوردها"),
+                       fluidRow(
+                         column(3, 
+                                div(class = "stat-box",
+                                    h6("میانگین امتیاز"),
+                                    textOutput("avg_rating")
+                                )
+                         ),
+                         column(3,
+                                div(class = "stat-box",
+                                    h6("تعداد امتیازها"),
+                                    textOutput("rating_count")
+                                )
+                         ),
+                         column(3,
+                                div(class = "stat-box",
+                                    h6("تعداد نظرات"),
+                                    textOutput("comment_count")
+                                )
+                         ),
+                         column(3,
+                                div(class = "stat-box",
+                                    h6("امتیاز شما"),
+                                    textOutput("user_rating")
+                                )
+                         )
+                       )
+                   )
+            )
+          ),
+          
+          fluidRow(
+            column(12,
+                   div(class = "rate-limit-panel",
+                       h5("⏰ وضعیت محدودیت ارسال"),
+                       fluidRow(
+                         column(6,
+                                div(class = "limit-stat",
+                                    h6("امتیازهای باقیمانده"),
+                                    textOutput("remaining_ratings")
+                                )
+                         ),
+                         column(6,
+                                div(class = "limit-stat",
+                                    h6("نظرات باقیمانده"),
+                                    textOutput("remaining_comments")
+                                )
+                         )
+                       ),
+                       fluidRow(
+                         column(12,
+                                div(class = "limit-info",
+                                    textOutput("rate_limit_info"),
+                                    style = "font-size: 12px; color: #666; margin-top: 10px;"
+                                )
+                         )
+                       )
+                   )
+            )
+          ),
+          
+          # نمایش نظرات
+          uiOutput("comments_display")
+      )
     )
   )
 )
+
+# ایجاد دیتابیس ساده در حافظه
+comments_db <- reactiveVal(data.frame(
+  id = integer(),
+  email = character(),
+  chapter = character(),
+  rating = numeric(),
+  comment = character(),
+  timestamp = character(),
+  stringsAsFactors = FALSE
+))
+
+ratings_db <- reactiveVal(data.frame(
+  email = character(),
+  chapter = character(),
+  rating = numeric(),
+  timestamp = character(),
+  stringsAsFactors = FALSE
+))
 
 server <- function(input, output, session) {
   output$main_content <- renderUI({
@@ -522,6 +789,39 @@ server <- function(input, output, session) {
            "intro" = tagList(
              div(class = "rtl-text farsi-font",
                  h2("فصل ۱: مقدمه و اهمیت آمار در پزشکی"),
+                 
+                 div(class = "summary-panel",
+                     style = "margin: 20px 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px;",
+                     
+                     h4("📈 خلاصه ارزیابی کل دوره"),
+                     
+                     fluidRow(
+                       column(3, 
+                              div(class = "summary-stat",
+                                  h5("میانگین امتیاز کل"),
+                                  textOutput("overall_avg_rating")
+                              )
+                       ),
+                       column(3,
+                              div(class = "summary-stat",
+                                  h5("تعداد کل امتیازها"),
+                                  textOutput("total_ratings")
+                              )
+                       ),
+                       column(3,
+                              div(class = "summary-stat",
+                                  h5("تعداد کل نظرات"),
+                                  textOutput("total_comments")
+                              )
+                       ),
+                       column(3,
+                              div(class = "summary-stat",
+                                  h5("پربازدیدترین فصل"),
+                                  textOutput("most_rated_chapter")
+                              )
+                       )
+                     )
+                 ),
                  
                  div(class = "section-title",
                      span(class = "section-number", "۱.۱"), "مقدمه آمار"
@@ -3325,10 +3625,6 @@ server <- function(input, output, session) {
              )
            ),
            
-           # در بخش UI، محتوای فصل ۱۱ به بعد را به این صورت اضافه کنید:
-           
-           # در تابع renderUI در سرور، بخش‌های مربوط به فصل ۱۱ به بعد را اضافه می‌کنیم:
-           
            "correlation" = tagList(
              div(class = "rtl-text farsi-font",
                  h2("فصل ۱۱: همبستگی"),
@@ -4867,6 +5163,138 @@ server <- function(input, output, session) {
       )
     )
   }, striped = TRUE, hover = TRUE)
+  
+  # تابع اعتبارسنجی پیشرفته ایمیل
+  validate_email <- function(email) {
+    if (is.null(email) || is.na(email) || email == "") {
+      return(list(valid = FALSE, message = "ایمیل نمی‌تواند خالی باشد"))
+    }
+    
+    # حذف فضاهای اضافی
+    email <- trimws(email)
+    
+    # الگوی پیشرفته برای اعتبارسنجی ایمیل
+    email_pattern <- "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    
+    if (!grepl(email_pattern, email)) {
+      return(list(valid = FALSE, message = "فرمت ایمیل نامعتبر است"))
+    }
+    
+    # بررسی دامنه‌های معروف
+    common_domains <- c("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", 
+                        "icloud.com", "protonmail.com", "aol.com", "mail.com",
+                        "yahoo.co.uk", "live.com", "msn.com")
+    
+    domain <- tolower(sub(".*@", "", email))
+    
+    if (!domain %in% common_domains) {
+      # اگر دامنه در لیست معروف نیست، ساختار کلی را بررسی می‌کنیم
+      if (!grepl("^[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", domain)) {
+        return(list(valid = FALSE, message = "دامنه ایمیل نامعتبر است"))
+      }
+    }
+    
+    # بررسی طول ایمیل
+    if (nchar(email) > 254) {
+      return(list(valid = FALSE, message = "ایمیل بسیار طولانی است"))
+    }
+    
+    # بررسی کاراکترهای مشکوک
+    if (grepl("\\.\\.", email) || grepl("@\\.", email) || grepl("\\.@", email)) {
+      return(list(valid = FALSE, message = "فرمت ایمیل نامعتبر است"))
+    }
+    
+    return(list(valid = TRUE, message = "ایمیل معتبر است"))
+  }
+  
+  # تابع برای نمایش خطاهای اعتبارسنجی
+  show_validation_error <- function(message) {
+    showNotification(message, 
+                     type = "error", 
+                     duration = 5,
+                     closeButton = TRUE)
+  }
+  
+  # تابع برای نمایش موفقیت
+  show_success_message <- function(message) {
+    showNotification(message, 
+                     type = "message", 
+                     duration = 3,
+                     closeButton = TRUE)
+  }
+  
+  # ایجاد reactiveVal برای ذخیره زمان آخرین ارسال
+  # ایجاد reactiveVal برای ذخیره زمان آخرین ارسال
+  last_rating_submit <- reactiveVal()
+  last_comment_submit <- reactiveVal()
+  
+  # ایجاد reactiveVal برای ذخیره تعداد ارسال‌های اخیر
+  recent_ratings_count <- reactiveVal(0)
+  recent_comments_count <- reactiveVal(0)
+  
+  # زمان شروع پنجره زمانی
+  window_start_time <- reactiveVal(Sys.time())
+  
+  # تابع برای بررسی محدودیت نرخ
+  check_rate_limit <- function(last_submit_time, recent_count, type = "rating") {
+    current_time <- Sys.time()
+    
+    # تنظیم محدودیت‌های مختلف برای امتیاز و نظر
+    if (type == "rating") {
+      min_interval <- 10  # حداقل 10 ثانیه بین امتیازها
+      max_per_hour <- 20  # حداکثر 20 امتیاز در ساعت
+    } else {
+      min_interval <- 30  # حداقل 30 ثانیه بین نظرات
+      max_per_hour <- 10  # حداکثر 10 نظر در ساعت
+    }
+    
+    # بررسی فاصله زمانی از آخرین ارسال
+    if (!is.null(last_submit_time)) {
+      time_since_last <- as.numeric(difftime(current_time, last_submit_time, units = "secs"))
+      if (time_since_last < min_interval) {
+        remaining <- ceiling(min_interval - time_since_last)
+        return(list(
+          allowed = FALSE,
+          message = paste("لطفاً", remaining, "ثانیه صبر کنید سپس دوباره ارسال کنید")
+        ))
+      }
+    }
+    
+    # بررسی تعداد ارسال در پنجره زمانی
+    time_since_window_start <- as.numeric(difftime(current_time, window_start_time(), units = "hours"))
+    if (time_since_window_start >= 1) {
+      # بازنشانی پنجره زمانی هر ساعت
+      window_start_time(Sys.time())
+      if (type == "rating") {
+        recent_ratings_count(0)
+      } else {
+        recent_comments_count(0)
+      }
+      return(list(allowed = TRUE, message = ""))
+    }
+    
+    if (recent_count >= max_per_hour) {
+      time_remaining <- ceiling(60 - (time_since_window_start * 60))
+      return(list(
+        allowed = FALSE,
+        message = paste("شما به سقف ارسال رسیده‌اید. لطفاً", time_remaining, "دقیقه دیگر تلاش کنید")
+      ))
+    }
+    
+    return(list(allowed = TRUE, message = ""))
+  }
+  
+  # تابع برای به‌روزرسانی شمارنده
+  update_rate_count <- function(type = "rating") {
+    if (type == "rating") {
+      current_count <- recent_ratings_count()
+      recent_ratings_count(current_count + 1)
+    } else {
+      current_count <- recent_comments_count()
+      recent_comments_count(current_count + 1)
+    }
+  }
+  
   
   # شبیه‌ساز توزیع نرمال
   observeEvent(input$plot_normal, {
@@ -6416,6 +6844,380 @@ server <- function(input, output, session) {
       )
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  # ایجاد reactive value برای پیگیری امتیازهای session جاری
+  session_ratings <- reactiveVal(0)
+  
+  # در تابع ثبت امتیاز:
+  observeEvent(input$submit_rating, {
+    req(input$rating_value)
+    # بررسی محدودیت بر اساس session
+    current_session_ratings <- session_ratings()
+    if (current_session_ratings >= 10) { # حداکثر 10 امتیاز در هر session
+      show_validation_error("شما به سقف امتیازدهی در این جلسه رسیده‌اید")
+      return()
+    }
+    
+    
+    # بررسی محدودیت نرخ (بدون اعتبارسنجی ایمیل)
+    rate_check <- check_rate_limit(
+      last_rating_submit(), 
+      recent_ratings_count(), 
+      "rating"
+    )
+    
+    if (!rate_check$allowed) {
+      show_validation_error(rate_check$message)
+      return()
+    }
+    
+    # تابع برای ایجاد شناسه ناشناس
+    generate_anonymous_id <- function() {
+      timestamp <- as.numeric(Sys.time()) * 1000
+      random_num <- sample(1000:9999, 1)
+      paste0("anonymous_", timestamp, "_", random_num)
+    }
+    
+    # سپس در تابع ثبت امتیاز:
+    new_rating <- data.frame(
+      email = generate_anonymous_id(), # ایجاد شناسه منحصر بفرد
+      chapter = input$tabs,
+      rating = as.numeric(input$rating_value),
+      timestamp = as.character(Sys.time()),
+      stringsAsFactors = FALSE
+    )
+    
+    ratings_db(rbind(current_ratings, new_rating))
+    
+    # به‌روزرسانی محدودیت نرخ
+    last_rating_submit(Sys.time())
+    update_rate_count("rating")
+    
+    show_success_message("✅ امتیاز شما با موفقیت ثبت شد")
+    
+    # ریست کردن مقدار امتیاز (اختیاری)
+    updateSelectInput(session, "rating_value", selected = 5)
+    # افزایش شمارنده session
+    session_ratings(current_session_ratings + 1)
+  })
+  
+  # مشاهده‌گر برای ثبت نظر - با محدودیت نرخ کامل
+  observeEvent(input$submit_comment, {
+    req(input$user_email_comment, input$user_comment)
+    
+    # اعتبارسنجی ایمیل
+    email_validation <- validate_email(input$user_email_comment)
+    if (!email_validation$valid) {
+      show_validation_error(email_validation$message)
+      return()
+    }
+    
+    # اعتبارسنجی نظر
+    comment_text <- trimws(input$user_comment)
+    if (nchar(comment_text) < 5) {
+      show_validation_error("لطفاً نظر معناداری وارد کنید (حداقل ۵ کاراکتر)")
+      return()
+    }
+    
+    if (nchar(comment_text) > 500) {
+      show_validation_error("نظر شما بسیار طولانی است (حداکثر ۵۰۰ کاراکتر)")
+      return()
+    }
+    
+    # بررسی محدودیت نرخ
+    rate_check <- check_rate_limit(
+      last_comment_submit(), 
+      recent_comments_count(), 
+      "comment"
+    )
+    
+    if (!rate_check$allowed) {
+      show_validation_error(rate_check$message)
+      return()
+    }
+    
+    # بررسی اسپم (نظرات تکراری)
+    current_comments <- comments_db()
+    duplicate_comment <- any(
+      current_comments$email == trimws(input$user_email_comment) &
+        current_comments$comment == comment_text &
+        current_comments$chapter == input$tabs
+    )
+    
+    if (duplicate_comment) {
+      show_validation_error("این نظر قبلاً توسط شما ثبت شده است")
+      return()
+    }
+    
+    # بررسی تعداد نظرات یکسان در مدت کوتاه
+    recent_duplicates <- current_comments %>%
+      filter(
+        email == trimws(input$user_email_comment),
+        as.numeric(difftime(Sys.time(), as.POSIXct(timestamp), units = "hours")) < 1
+      ) %>%
+      nrow()
+    
+    if (recent_duplicates >= 3) {
+      show_validation_error("شما نظرات زیادی در ساعت گذشته ارسال کرده‌اید. لطفاً کمی صبر کنید.")
+      return()
+    }
+    
+    # ذخیره نظر
+    new_comment <- data.frame(
+      id = ifelse(nrow(current_comments) == 0, 1, max(current_comments$id) + 1),
+      email = trimws(input$user_email_comment),
+      chapter = input$tabs,
+      rating = NA,
+      comment = comment_text,
+      timestamp = as.character(Sys.time()),
+      stringsAsFactors = FALSE
+    )
+    
+    comments_db(rbind(current_comments, new_comment))
+    
+    # به‌روزرسانی محدودیت نرخ
+    last_comment_submit(Sys.time())
+    update_rate_count("comment")
+    
+    # پاک کردن فیلدها
+    updateTextInput(session, "user_email_comment", value = "")
+    updateTextAreaInput(session, "user_comment", value = "")
+    
+    show_success_message("✅ نظر شما با موفقیت ثبت شد")
+  })
+  
+  observe({
+    # برای دکمه امتیاز
+    rate_check <- check_rate_limit(last_rating_submit(), recent_ratings_count(), "rating")
+    
+    if (!rate_check$allowed) {
+      # غیرفعال کردن دکمه و اضافه کردن استایل
+      runjs("
+      $('#submit_rating').prop('disabled', true);
+      $('#submit_rating').addClass('btn-rate-limited');
+      $('#submit_rating').attr('title', 'لطفاً صبر کنید...');
+    ")
+    } else {
+      # فعال کردن دکمه
+      runjs("
+      $('#submit_rating').prop('disabled', false);
+      $('#submit_rating').removeClass('btn-rate-limited');
+      $('#submit_rating').attr('title', 'ثبت امتیاز');
+    ")
+    }
+  })
+  
+  observe({
+    # برای دکمه نظر
+    comment_check <- check_rate_limit(last_comment_submit(), recent_comments_count(), "comment")
+    
+    if (!comment_check$allowed) {
+      runjs("
+      $('#submit_comment').prop('disabled', true);
+      $('#submit_comment').addClass('btn-rate-limited');
+      $('#submit_comment').attr('title', 'لطفاً صبر کنید...');
+    ")
+    } else {
+      runjs("
+      $('#submit_comment').prop('disabled', false);
+      $('#submit_comment').removeClass('btn-rate-limited');
+      $('#submit_comment').attr('title', 'ثبت نظر');
+    ")
+    }
+  })
+  
+  # مشاهده‌گر برای انیمیشن هشدار وقتی محدودیت نزدیک است
+  observe({
+    invalidateLater(5000) # هر 5 ثانیه چک کن
+    
+    ratings_remaining <- 20 - recent_ratings_count()
+    comments_remaining <- 10 - recent_comments_count()
+    
+    if (ratings_remaining <= 3 || comments_remaining <= 2) {
+      runjs("$('.rate-limit-panel').addClass('rate-limit-warning');")
+    } else {
+      runjs("$('.rate-limit-panel').removeClass('rate-limit-warning');")
+    }
+  })
+  
+  # تابع برای محاسبه آمار
+  calculate_stats <- function(chapter) {
+    current_ratings <- ratings_db()
+    current_comments <- comments_db()
+    
+    chapter_ratings <- current_ratings[current_ratings$chapter == chapter, ]
+    chapter_comments <- current_comments[current_comments$chapter == chapter, ]
+    
+    list(
+      avg_rating = ifelse(nrow(chapter_ratings) > 0, 
+                          round(mean(chapter_ratings$rating), 2), 0),
+      rating_count = nrow(chapter_ratings),
+      comment_count = nrow(chapter_comments)
+    )
+  }
+  
+  # خروجی‌های آمار
+  output$avg_rating <- renderText({
+    stats <- calculate_stats(input$tabs)
+    paste(stats$avg_rating, "از 5")
+  })
+  
+  output$rating_count <- renderText({
+    stats <- calculate_stats(input$tabs)
+    paste(stats$rating_count, "امتیاز")
+  })
+  
+  output$comment_count <- renderText({
+    stats <- calculate_stats(input$tabs)
+    paste(stats$comment_count, "نظر")
+  })
+  
+  output$user_rating <- renderText({
+    # برای کاربران ناشناس همیشه "ثبت نشده" نشان داده می‌شود
+    # یا می‌توانید با استفاده از session$token وضعیت را پیگیری کنید
+    "ثبت نشده" # یا پیام مناسب دیگر
+  })
+  
+  # نمایش نظرات
+  output$comments_display <- renderUI({
+    current_comments <- comments_db()
+    chapter_comments <- current_comments[current_comments$chapter == input$tabs, ]
+    
+    if (nrow(chapter_comments) == 0) {
+      return(
+        div(class = "no-comments",
+            p("هنوز نظری برای این فصل ثبت نشده است."),
+            style = "text-align: center; color: #666; padding: 20px;"
+        )
+      )
+    }
+    
+    # مرتب‌سازی نظرات بر اساس زمان (جدیدترین اول)
+    chapter_comments <- chapter_comments[order(chapter_comments$timestamp, decreasing = TRUE), ]
+    
+    comment_list <- lapply(1:nrow(chapter_comments), function(i) {
+      comment <- chapter_comments[i, ]
+      div(class = "comment-item",
+          div(class = "comment-header",
+              span(class = "comment-email", comment$email),
+              span(class = "comment-time", 
+                   format(as.POSIXct(comment$timestamp), "%Y-%m-%d %H:%M"))
+          ),
+          div(class = "comment-content", comment$comment)
+      )
+    })
+    
+    tagList(
+      h5("نظرات کاربران"),
+      comment_list
+    )
+  })
+  
+  output$overall_avg_rating <- renderText({
+    current_ratings <- ratings_db()
+    if (nrow(current_ratings) > 0) {
+      paste(round(mean(current_ratings$rating), 2), "از 5")
+    } else {
+      "ثبت نشده"
+    }
+  })
+  
+  output$total_ratings <- renderText({
+    current_ratings <- ratings_db()
+    paste(nrow(current_ratings), "امتیاز")
+  })
+  
+  output$total_comments <- renderText({
+    current_comments <- comments_db()
+    paste(nrow(current_comments), "نظر")
+  })
+  
+  output$most_rated_chapter <- renderText({
+    current_ratings <- ratings_db()
+    if (nrow(current_ratings) > 0) {
+      chapter_counts <- table(current_ratings$chapter)
+      most_rated <- names(which.max(chapter_counts))
+      most_rated
+    } else {
+      "ثبت نشده"
+    }
+  })
+  
+  # نمایش تعداد امتیازهای باقیمانده
+  output$remaining_ratings <- renderText({
+    max_per_hour <- 20
+    remaining <- max_per_hour - recent_ratings_count()
+    paste(max(0, remaining), "/", max_per_hour)
+  })
+  
+  # نمایش تعداد نظرات باقیمانده
+  output$remaining_comments <- renderText({
+    max_per_hour <- 10
+    remaining <- max_per_hour - recent_comments_count()
+    paste(max(0, remaining), "/", max_per_hour)
+  })
+  
+  # نمایش اطلاعات محدودیت
+  output$rate_limit_info <- renderText({
+    current_time <- Sys.time()
+    time_since_window <- as.numeric(difftime(current_time, window_start_time(), units = "mins"))
+    time_remaining <- max(0, 60 - time_since_window)
+    
+    paste(
+      "محدودیت‌ها هر ساعت بازنشانی می‌شوند. ",
+      "زمان باقیمانده:", round(time_remaining), "دقیقه"
+    )
+  })
+  
+  # مشاهده‌گر برای بازنشانی خودکار محدودیت‌ها
+  observe({
+    invalidateLater(60000) # هر دقیقه چک کن
+    
+    current_time <- Sys.time()
+    time_since_window <- as.numeric(difftime(current_time, window_start_time(), units = "hours"))
+    
+    if (time_since_window >= 1) {
+      window_start_time(Sys.time())
+      recent_ratings_count(0)
+      recent_comments_count(0)
+    }
+  })
+  
+  
+  # اعتبارسنجی لحظه‌ای ایمیل امتیاز
+  observe({
+    email <- input$user_email_rating
+    if (!is.null(email) && email != "") {
+      validation <- validate_email(email)
+      
+      if (validation$valid) {
+        # ایمیل معتبر - اضافه کردن کلاس معتبر
+        runjs("$('#user_email_rating').parent().addClass('shiny-input-valid').removeClass('shiny-input-invalid');")
+      } else {
+        # ایمیل نامعتبر - اضافه کردن کلاس نامعتبر
+        runjs("$('#user_email_rating').parent().addClass('shiny-input-invalid').removeClass('shiny-input-valid');")
+      }
+    } else {
+      # فیلد خالی - حذف کلاس‌ها
+      runjs("$('#user_email_rating').parent().removeClass('shiny-input-valid shiny-input-invalid');")
+    }
+  })
+  
+  # اعتبارسنجی لحظه‌ای ایمیل نظر
+  observe({
+    email <- input$user_email_comment
+    if (!is.null(email) && email != "") {
+      validation <- validate_email(email)
+      
+      if (validation$valid) {
+        runjs("$('#user_email_comment').parent().addClass('shiny-input-valid').removeClass('shiny-input-invalid');")
+      } else {
+        runjs("$('#user_email_comment').parent().addClass('shiny-input-invalid').removeClass('shiny-input-valid');")
+      }
+    } else {
+      runjs("$('#user_email_comment').parent().removeClass('shiny-input-valid shiny-input-invalid');")
+    }
+  })
   
 }
 
